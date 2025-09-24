@@ -33,7 +33,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/${{ github.repository_owner }}/milky-tarot
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha
@@ -92,7 +92,7 @@ jobs:
             BOT_TOKEN=${{ secrets.BOT_TOKEN }}
             ADMIN_ID=${{ secrets.ADMIN_ID }}
             TZ=Europe/Moscow
-            GITHUB_REPOSITORY=${{ github.repository }}
+            GITHUB_REPOSITORY_OWNER=${{ github.repository_owner }}
             EOF
 
       - name: Deploy compose stack
