@@ -1,0 +1,1 @@
+# Makes 'bot' a package 

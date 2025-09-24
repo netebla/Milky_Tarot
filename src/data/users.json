@@ -1,0 +1,26 @@
+{
+  "users": {
+    "380969336": {
+      "id": 380969336,
+      "username": "netebla",
+      "registered_at": "2025-09-23T12:09:43Z",
+      "push_time": "18:00",
+      "push_enabled": true,
+      "last_card": "Смерть",
+      "last_card_date": "2025-09-23",
+      "last_activity_date": "2025-09-23",
+      "draw_count": 1
+    },
+    "809239248": {
+      "id": 809239248,
+      "username": "mamamew",
+      "registered_at": "2025-09-23T12:15:55Z",
+      "push_time": "10:00",
+      "push_enabled": true,
+      "last_card": "Рыцарь жезлов",
+      "last_card_date": "2025-09-23",
+      "last_activity_date": "2025-09-23",
+      "draw_count": 1
+    }
+  }
+}
