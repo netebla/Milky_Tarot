@@ -45,4 +45,4 @@ Workflow `.github/workflows/cicd.yml` делает следующее:
 
 - Контейнер использует `python:3.10-slim`, точка входа `python -m bot.main`.
 - Данные и изображения — в `src/data`. Файл `users.json` сохраняется между перезапусками.
-- Часовой пояс по умолчанию `Europe/Moscow`.
+- Часовой пояс по умолчанию `Europe/Moscow`.# Test CI/CD
