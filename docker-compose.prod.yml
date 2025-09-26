@@ -1,13 +1,28 @@
 version: "3.9"
 services:
-  bot:
-    image: ghcr.io/${GITHUB_REPOSITORY_OWNER:-owner}/milky-tarot:latest
-    container_name: tarot_bot
+  db:
+    image: postgres:15
+    container_name: tarot_db
     environment:
-      - BOT_TOKEN=${BOT_TOKEN}
-      - ADMIN_ID=${ADMIN_ID}
-      - TZ=${TZ:-Europe/Moscow}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: your_password
+      POSTGRES_DB: tarot_db
+      TZ: Europe/Moscow
     volumes:
-      - ./data/users.json:/app/src/data/users.json
+      - tarot_pgdata:/var/lib/postgresql/data
     restart: unless-stopped
 
+  bot:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/milky-tarot:latest
+    container_name: tarot_bot
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      ADMIN_ID: ${ADMIN_ID}
+      DATABASE_URL: postgresql://postgres:your_password@db:5432/tarot_db
+      TZ: Europe/Moscow
+    depends_on:
+      - db
+    restart: unless-stopped
+
+volumes:
+  tarot_pgdata:

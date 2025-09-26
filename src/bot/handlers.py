@@ -86,7 +86,7 @@ async def cmd_start(message: Message) -> None:
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
     await message.answer(
-        "Бот тянет карту дня, отправляет ежедневные напоминания и хранит настройки."
+        "Для связи с админом пишите @netebla"
     )
 
 
