@@ -60,6 +60,7 @@ async def _send_card_of_the_day(message: Message, user_id: int) -> None:
 
 
 
+
 async def _send_card_message(message: Message, card) -> None:
     caption = f"Карта дня: {card.title}\n\n{card.description}"
     image_url = card.image_url()  # берём ссылку на GitHub
