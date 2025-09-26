@@ -1,25 +1,27 @@
 """
-Утилиты загрузки карт Таро.
+Утилиты загрузки карт Таро через GitHub.
 
-- Загружает карты из CSV по пути src/data/cards.csv
+- Загружает карты из CSV по пути src/data/cards.csv (из репозитория локально)
 - Формат CSV: title;description
-- Предоставляет функцию выбора случайной карты
+- Для картинок формирует URL в GitHub
+- Предоставляет функцию выбора карты дня
 """
+
 from __future__ import annotations
 import csv
 import os
 import random
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List
 from datetime import datetime
 import pytz
 
+# Базовый URL для картинок в GitHub
+GITHUB_RAW_BASE = "https://raw.githubusercontent.com/netebla/Milky_Tarot/main/src/data/images"
+
+# Путь к CSV локально (он нужен только для названий и описаний)
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 CARDS_PATH = os.path.join(DATA_DIR, "cards.csv")
-IMAGES_DIR = os.path.join(DATA_DIR, "images")
-
-# Базовый URL GitHub (замени netebla/Milky_Tarot если надо)
-GITHUB_BASE = "https://raw.githubusercontent.com/netebla/Milky_Tarot/main/src/data/images"
 
 MOSCOW_TZ = pytz.timezone("Europe/Moscow")
 
@@ -29,21 +31,10 @@ class Card:
     title: str
     description: str
 
-    def normalized_filename(self) -> str:
-        """Нормализованное имя файла: пробелы -> '_', .jpg"""
-        return f"{self.title.replace(' ', '_')}.jpg"
-
-    def image_path(self) -> Optional[str]:
-        """Вернуть путь к изображению.
-        1. Локальный файл в контейнере
-        2. Файл с GitHub
-        """
-        local_candidate = os.path.join(IMAGES_DIR, self.normalized_filename())
-        if os.path.exists(local_candidate):
-            return local_candidate
-
-        # Если локально нет, возвращаем ссылку на GitHub
-        return f"{GITHUB_BASE}/{self.normalized_filename()}"
+    def image_url(self) -> str:
+        """Вернуть URL к изображению в GitHub."""
+        normalized = self.title.strip().replace(" ", "_")
+        return f"{GITHUB_RAW_BASE}/{normalized}.jpg"
 
 
 def load_cards() -> List[Card]:
@@ -67,7 +58,7 @@ def load_cards() -> List[Card]:
     return cards
 
 
-def choose_random_card(user: dict, cards: List[Card]) -> Card:
+def choose_daily_card(user: dict, cards: List[Card]) -> Card:
     """
     Выбрать карту дня для пользователя.
     - Если карта уже выбрана сегодня, вернуть её.
