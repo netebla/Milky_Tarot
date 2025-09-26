@@ -49,7 +49,7 @@ async def _send_card_of_the_day(message: Message, user_id: int) -> None:
         return
 
     # Выбор новой карты
-    card = choose_random_card(CARDS)
+    card = choose_random_card(user, CARDS)
     if card is None:
         await message.answer("Не удалось выбрать карту. Обратитесь к администратору.")
         return
