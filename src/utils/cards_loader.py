@@ -58,7 +58,7 @@ def load_cards() -> List[Card]:
     return cards
 
 
-def choose_daily_card(user: dict, cards: List[Card]) -> Card:
+def choose_random_card(user: dict, cards: List[Card]) -> Card:
     """
     Выбрать карту дня для пользователя.
     - Если карта уже выбрана сегодня, вернуть её.
