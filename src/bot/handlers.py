@@ -56,9 +56,9 @@ async def _send_card_of_the_day(message: Message, user_id: int) -> None:
 
 async def _send_card_message(message: Message, card) -> None:
     caption = f"Карта дня: {card.title}\n\n{card.description}"
-    image_path = card.image_path()
-    if image_path:
-        await message.answer_photo(InputFile(image_path), caption=caption)
+    image_url = card.image_url()  # берём ссылку на GitHub
+    if image_url:
+        await message.answer_photo(image_url, caption=caption)
     else:
         await message.answer(caption)
 
