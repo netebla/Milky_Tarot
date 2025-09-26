@@ -31,7 +31,6 @@ except Exception as e:
 _ADMIN_RAW = os.getenv("ADMIN_ID") or os.getenv("ADMIN_IDS") or ""
 ADMIN_IDS = {s.strip() for s in _ADMIN_RAW.split(",") if s.strip()}
 
-
 async def _send_card_of_the_day(message: Message, user_id: int) -> None:
     storage = UserStorage()
     user = storage.ensure_user(user_id, message.from_user.username if message.from_user else None)
@@ -49,9 +48,16 @@ async def _send_card_of_the_day(message: Message, user_id: int) -> None:
         await message.answer("Карты не загружены. Обратитесь к администратору.")
         return
 
+    # Выбор новой карты
     card = choose_random_card(CARDS)
+    if card is None:
+        await message.answer("Не удалось выбрать карту. Обратитесь к администратору.")
+        return
+
     storage.set_last_card(user_id, card.title)
     await _send_card_message(message, card)
+
+
 
 
 async def _send_card_message(message: Message, card) -> None:
