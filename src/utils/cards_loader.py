@@ -18,6 +18,9 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 CARDS_PATH = os.path.join(DATA_DIR, "cards.csv")
 IMAGES_DIR = os.path.join(DATA_DIR, "images")
 
+# Базовый URL GitHub (замени netebla/Milky_Tarot если надо)
+GITHUB_BASE = "https://raw.githubusercontent.com/netebla/Milky_Tarot/main/src/data/images"
+
 MOSCOW_TZ = pytz.timezone("Europe/Moscow")
 
 
@@ -26,10 +29,21 @@ class Card:
     title: str
     description: str
 
+    def normalized_filename(self) -> str:
+        """Нормализованное имя файла: пробелы -> '_', .jpg"""
+        return f"{self.title.replace(' ', '_')}.jpg"
+
     def image_path(self) -> Optional[str]:
-        """Вернуть путь к изображению при наличии, иначе None."""
-        candidate = os.path.join(IMAGES_DIR, f"{self.title}.jpg")
-        return candidate if os.path.exists(candidate) else None
+        """Вернуть путь к изображению.
+        1. Локальный файл в контейнере
+        2. Файл с GitHub
+        """
+        local_candidate = os.path.join(IMAGES_DIR, self.normalized_filename())
+        if os.path.exists(local_candidate):
+            return local_candidate
+
+        # Если локально нет, возвращаем ссылку на GitHub
+        return f"{GITHUB_BASE}/{self.normalized_filename()}"
 
 
 def load_cards() -> List[Card]:
@@ -53,7 +67,7 @@ def load_cards() -> List[Card]:
     return cards
 
 
-def choose_daily_card(user: dict, cards: List[Card]) -> Card:
+def choose_random_card(user: dict, cards: List[Card]) -> Card:
     """
     Выбрать карту дня для пользователя.
     - Если карта уже выбрана сегодня, вернуть её.
