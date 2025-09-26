@@ -24,15 +24,13 @@ class Card:
     description: str
 
     def image_path(self) -> Optional[str]:
-        # 1. Пробуем точное совпадение
-        candidate = os.path.join(IMAGES_DIR, f"{self.title}.jpg")
-        if os.path.exists(candidate):
-            return candidate
-
-        # 2. Пробуем нормализованное имя
+        """Вернуть путь к изображению при наличии, иначе None.
+        Ожидаемое имя файла: images/<нормализованное-название>.jpg
+        Нормализация: нижний регистр, пробелы -> подчёркивания. (Простая эвристика)
+        """
         normalized = self.title.strip().lower().replace(" ", "_")
-        candidate_norm = os.path.join(IMAGES_DIR, f"{normalized}.jpg")
-        return candidate_norm if os.path.exists(candidate_norm) else None
+        candidate = os.path.join(IMAGES_DIR, f"{normalized}.jpg")
+        return candidate if os.path.exists(candidate) else None
 
 
 def load_cards() -> List[Card]:
