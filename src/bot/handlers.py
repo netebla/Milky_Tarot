@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 import csv
 import random
 import logging
@@ -10,7 +11,7 @@ import asyncio
 
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InputFile
+from aiogram.types import Message, CallbackQuery, InputFile, FSInputFile
 
 from src.utils.cards_loader import GITHUB_RAW_BASE
 from utils.storage import UserStorage
@@ -92,7 +93,8 @@ async def cmd_start(message: Message) -> None:
             user.get("push_time", UserStorage.DEFAULT_PUSH_TIME),
             lambda user_id: asyncio.create_task(send_push_card(get_bot(), user_id)),
         )
-    photo = InputFile("images/welcome.jpg")
+
+    photo = FSInputFile("images/welcome.jpg")
     await message.answer_photo(
         photo=photo,
         caption=(
