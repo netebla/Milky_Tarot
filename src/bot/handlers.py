@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import random
 import logging
 import os
@@ -215,7 +216,7 @@ class AdviceCard:
 
 def load_advice_cards() -> list[AdviceCard]:
     cards = []
-    with open("cards_advice.csv", "r", encoding="utf-8") as f:
+    with open("src/data/cards_advice.csv", "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             cards.append(AdviceCard(row["title"], row["description"]))

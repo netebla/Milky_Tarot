@@ -21,6 +21,8 @@ class User(Base):
     last_card_date = Column(Date, nullable=True)
     last_activity_date = Column(Date, default=date.today)
     draw_count = Column(Integer, default=0)
+    daily_advice_count = Column(Integer, default=0)
+    advice_last_date = Column(Date, nullable=True)
 
 def init_db():
     Base.metadata.create_all(bind=engine)
