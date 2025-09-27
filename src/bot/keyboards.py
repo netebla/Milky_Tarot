@@ -4,7 +4,7 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="Вытянуть карту дня")],
-            [KeyboardButton(text="Узнать совет дня")],
+            [KeyboardButton(text="Узнать совет карт")],
             [KeyboardButton(text="Мои настройки"), KeyboardButton(text="Помощь")],
         ],
         resize_keyboard=True,

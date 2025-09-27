@@ -231,7 +231,7 @@ def load_advice_cards() -> list[AdviceCard]:
 ADVICE_CARDS = load_advice_cards()
 
 
-@router.message(lambda msg: msg.text == "Узнать совет дня")
+@router.message(lambda msg: msg.text == "Узнать совет карт")
 async def send_advice(message: Message):
     today = date.today()
     session: Session = SessionLocal()
