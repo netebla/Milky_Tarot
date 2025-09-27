@@ -31,10 +31,10 @@ except Exception as e:
 _ADMIN_RAW = os.getenv("ADMIN_ID") or os.getenv("ADMIN_IDS") or ""
 ADMIN_IDS = {s.strip() for s in _ADMIN_RAW.split(",") if s.strip()}
 
-from .db import SessionLocal, User
-from .cards_loader import load_cards, choose_random_card
+from utils.db import SessionLocal, User
+from utils.cards_loader import load_cards, choose_random_card
 from datetime import date
-
+#модуль utils.db
 async def _send_card_of_the_day(message: Message, user_id: int) -> None:
     """Выдать карту дня, обновить статистику в Postgres через SQLAlchemy."""
     session = SessionLocal()
