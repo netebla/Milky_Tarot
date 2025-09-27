@@ -1,16 +1,15 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
-
 def main_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="Вытянуть карту дня")],
+            [KeyboardButton(text="Узнать совет дня")],
             [KeyboardButton(text="Мои настройки"), KeyboardButton(text="Помощь")],
         ],
         resize_keyboard=True,
         input_field_placeholder="Выберите действие",
     )
-
 
 def settings_inline_kb(push_enabled: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
