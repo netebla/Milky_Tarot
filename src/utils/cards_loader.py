@@ -57,6 +57,20 @@ def load_cards() -> List[Card]:
 
     return cards
 
+CARDS_ADVICE_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "cards_advice.csv")
+
+def load_advice_cards() -> List[Card]:
+    cards = []
+    with open(CARDS_ADVICE_PATH, newline="", encoding="utf-8") as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            cards.append(Card(title=row["title"], description=row["description"]))
+    return cards
+
+
+
+
+
 import random
 from datetime import datetime
 from typing import List
