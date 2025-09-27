@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import logging
 import os
 from datetime import date
@@ -89,9 +90,14 @@ async def cmd_start(message: Message) -> None:
             user.get("push_time", UserStorage.DEFAULT_PUSH_TIME),
             lambda user_id: asyncio.create_task(send_push_card(get_bot(), user_id)),
         )
-
-    await message.answer(
-        "Привет! Я Таролог. Нажми кнопку, чтобы вытянуть карту дня.",
+    photo = InputFile("images/welcome.jpg")
+    await message.answer_photo(
+        photo=photo,
+        caption=(
+            "👋 Привет! Рада познакомиться и видеть тебя здесь. Я — Милки, твой спутник в мире карт. "
+            "Каждый день я буду присылать твою персональную карту и показывать, на что стоит обратить внимание, "
+            "какие скрытые возможности рядом и где сосредоточена твоя энергия. 🌟 С чего начнем сегодня? ❤️"
+        ),
         reply_markup=main_menu_kb(),
     )
 
@@ -195,3 +201,57 @@ async def admin_stats(message: Message) -> None:
     await message.answer(
         f"Статистика:\nПользователей: {total_users}\nАктивны сегодня: {active_today}\nВытянуто карт (всего): {total_draws}"
     ) 
+
+
+class AdviceCard:
+    def __init__(self, title: str, description: str):
+        self.title = title
+        self.description = description
+
+    def image_url(self) -> str:
+        normalized = self.title.strip().replace(" ", "_")
+        return f"{GITHUB_RAW_BASE}/{normalized}.jpg"
+
+
+def load_advice_cards() -> list[AdviceCard]:
+    cards = []
+    with open("cards_advice.csv", "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            cards.append(AdviceCard(row["title"], row["description"]))
+    return cards
+
+
+ADVICE_CARDS = load_advice_cards()
+
+
+@router.message(lambda msg: msg.text == "Узнать совет дня")
+async def send_advice(message: Message):
+    today = date.today()
+    session: Session = SessionLocal()
+    try:
+        user = session.query(User).filter(User.id == message.from_user.id).first()
+        if not user:
+            await message.answer("Сначала нажми /start 🚀")
+            return
+
+        # сброс при новом дне
+        if user.advice_last_date != today:
+            user.advice_count = 0
+            user.advice_last_date = today
+
+        if user.advice_count >= 2:
+            await message.answer("⚠️ Лимит советов на сегодня исчерпан. Следующие будут доступны завтра 🌙")
+            return
+
+        card = random.choice(ADVICE_CARDS)
+        user.advice_count += 1
+        user.advice_last_date = today
+        session.commit()
+
+        await message.answer_photo(
+            photo=card.image_url(),
+            caption=f"✨ Совет карт: {card.title}\n\n{card.description}"
+        )
+    finally:
+        session.close()
