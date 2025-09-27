@@ -240,15 +240,15 @@ async def send_advice(message: Message):
 
         # сброс при новом дне
         if user.advice_last_date != today:
-            user.advice_count = 0
+            user.daily_advice_count = 0
             user.advice_last_date = today
 
-        if user.advice_count >= 2:
+        if user.daily_advice_count >= 2:
             await message.answer("⚠️ Лимит советов на сегодня исчерпан. Следующие будут доступны завтра 🌙")
             return
 
         card = random.choice(ADVICE_CARDS)
-        user.advice_count += 1
+        user.daily_advice_count += 1
         user.advice_last_date = today
         session.commit()
 
