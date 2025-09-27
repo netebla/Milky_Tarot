@@ -203,7 +203,6 @@ async def admin_stats(message: Message) -> None:
         f"Статистика:\nПользователей: {total_users}\nАктивны сегодня: {active_today}\nВытянуто карт (всего): {total_draws}"
     ) 
 
-
 class AdviceCard:
     def __init__(self, title: str, description: str):
         self.title = title
@@ -217,9 +216,12 @@ class AdviceCard:
 def load_advice_cards() -> list[AdviceCard]:
     cards = []
     with open("src/data/cards_advice.csv", "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
+        reader = csv.reader(f, delimiter=";")  # без заголовка
         for row in reader:
-            cards.append(AdviceCard(row["title"], row["description"]))
+            if len(row) < 2:
+                continue
+            title, description = row[0], row[1]
+            cards.append(AdviceCard(title, description))
     return cards
 
 
