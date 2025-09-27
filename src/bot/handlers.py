@@ -56,7 +56,7 @@ async def _send_card_of_the_day(message: Message, user_id: int) -> None:
                 await _send_card_message(message, card)
                 return
 
-        card = choose_random_card(cards)
+        card = choose_random_card(user, cards)
         user.last_card = card.title
         user.last_card_date = today
         user.last_activity_date = today
