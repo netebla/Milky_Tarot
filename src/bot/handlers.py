@@ -12,6 +12,7 @@ from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InputFile
 
+from src.utils.cards_loader import GITHUB_RAW_BASE
 from utils.storage import UserStorage
 from utils.cards_loader import load_cards, choose_random_card
 from utils.app_state import get_scheduler, get_bot
