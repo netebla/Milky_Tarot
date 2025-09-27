@@ -31,31 +31,41 @@ except Exception as e:
 _ADMIN_RAW = os.getenv("ADMIN_ID") or os.getenv("ADMIN_IDS") or ""
 ADMIN_IDS = {s.strip() for s in _ADMIN_RAW.split(",") if s.strip()}
 
+from .db import SessionLocal, User
+from .cards_loader import load_cards, choose_random_card
+from datetime import date
+
 async def _send_card_of_the_day(message: Message, user_id: int) -> None:
-    storage = UserStorage()
-    user = storage.ensure_user(user_id, message.from_user.username if message.from_user else None)
-    today = date.today().isoformat()
+    """Выдать карту дня, обновить статистику в Postgres через SQLAlchemy."""
+    session = SessionLocal()
+    try:
+        user = session.query(User).filter(User.id == user_id).first()
+        if not user:
+            # Создаём нового пользователя
+            user = User(id=user_id, username=message.from_user.username if message.from_user else None)
+            session.add(user)
+            session.commit()
 
-    # Если сегодня уже тянули — возвращаем сохранённую
-    if user.get("last_card") and user.get("last_card_date") == today:
-        title = user["last_card"]
-        card = next((c for c in CARDS if c.title == title), None)
-        if card:
-            await _send_card_message(message, card)
-            return
+        today = date.today()
+        cards = load_cards()
 
-    if not CARDS:
-        await message.answer("Карты не загружены. Обратитесь к администратору.")
-        return
+        if user.last_card and user.last_card_date == today:
+            title = user.last_card
+            card = next((c for c in cards if c.title == title), None)
+            if card:
+                await _send_card_message(message, card)
+                return
 
-    # Выбор новой карты
-    card = choose_random_card(user, CARDS)
-    if card is None:
-        await message.answer("Не удалось выбрать карту. Обратитесь к администратору.")
-        return
+        card = choose_random_card(cards)
+        user.last_card = card.title
+        user.last_card_date = today
+        user.last_activity_date = today
+        user.draw_count += 1
+        session.commit()
 
-    storage.set_last_card(user_id, card.title)
-    await _send_card_message(message, card)
+        await _send_card_message(message, card)
+    finally:
+        session.close()
 
 
 
