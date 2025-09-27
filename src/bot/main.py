@@ -6,8 +6,9 @@ import os
 import signal
 
 from aiogram import Bot, Dispatcher
-from aiogram.enums.parse_mode import ParseMode
+from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.client.default import DefaultBotProperties
 
 from utils.storage import UserStorage
 from utils.scheduler import PushScheduler
@@ -41,8 +42,7 @@ async def reschedule_user_pushes(bot: Bot) -> None:
             push_scheduler.remove(user_id)
 
 
-async def on_startup(dispatcher: Dispatcher) -> None:
-    bot = dispatcher.bot
+async def on_startup(bot: Bot) -> None:
     push_scheduler.start()
     set_bot(bot)
     set_scheduler(push_scheduler)
@@ -50,18 +50,25 @@ async def on_startup(dispatcher: Dispatcher) -> None:
     logger.info("Бот запущен, планировщик активен, задания восстановлены")
 
 
-async def on_shutdown(dispatcher: Dispatcher) -> None:
+async def on_shutdown(bot: Bot) -> None:
     push_scheduler.shutdown()
     logger.info("Бот остановлен")
 
 
 async def main() -> None:
-    bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+    bot = Bot(
+        token=BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
     dp = Dispatcher(storage=MemoryStorage())
+
+    # Инициализация общего состояния ДО старта поллинга
+    set_bot(bot)
+    set_scheduler(push_scheduler)
 
     dp.include_router(handlers_router)
 
-    # Регистрируем хуки старта/остановки
+    # Регистрируем события старта и завершения
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
