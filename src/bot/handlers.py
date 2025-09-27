@@ -34,7 +34,6 @@ ADMIN_IDS = {s.strip() for s in _ADMIN_RAW.split(",") if s.strip()}
 from utils.db import SessionLocal, User
 from utils.cards_loader import load_cards, choose_random_card
 from datetime import date
-#модуль utils.db
 async def _send_card_of_the_day(message: Message, user_id: int) -> None:
     """Выдать карту дня, обновить статистику в Postgres через SQLAlchemy."""
     session = SessionLocal()
@@ -42,32 +41,29 @@ async def _send_card_of_the_day(message: Message, user_id: int) -> None:
         user = session.query(User).filter(User.id == user_id).first()
         if not user:
             # Создаём нового пользователя
-            user = User(id=user_id, username=message.from_user.username if message.from_user else None)
+            user = User(
+                id=user_id,
+                username=message.from_user.username if message.from_user else None
+            )
             session.add(user)
             session.commit()
+            session.refresh(user)
 
         today = date.today()
         cards = load_cards()
 
         if user.last_card and user.last_card_date == today:
-            title = user.last_card
-            card = next((c for c in cards if c.title == title), None)
+            # Уже тянули карту сегодня
+            card = next((c for c in cards if c.title == user.last_card), None)
             if card:
                 await _send_card_message(message, card)
                 return
 
-        card = choose_random_card(user, cards)
-        user.last_card = card.title
-        user.last_card_date = today
-        user.last_activity_date = today
-        user.draw_count += 1
-        session.commit()
-
+        # Выбираем новую карту и сохраняем в базе
+        card = choose_random_card(user, cards, db=session)
         await _send_card_message(message, card)
     finally:
         session.close()
-
-
 
 
 

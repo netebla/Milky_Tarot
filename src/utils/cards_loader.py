@@ -57,23 +57,37 @@ def load_cards() -> List[Card]:
 
     return cards
 
+import random
+from datetime import datetime
+from typing import List
+from sqlalchemy.orm import Session
+from .db import User
+from .cards_loader import Card, MOSCOW_TZ  # предполагаю, что Card и часовой пояс уже есть
 
-def choose_random_card(user: dict, cards: List[Card]) -> Card:
+def choose_random_card(user: User, cards: List[Card], db: Session) -> Card:
     """
     Выбрать карту дня для пользователя.
     - Если карта уже выбрана сегодня, вернуть её.
-    - Иначе выбрать случайную, обновить last_card и last_card_date.
+    - Иначе выбрать случайную, обновить last_card, last_card_date и draw_count в базе.
     """
     now_moscow = datetime.now(MOSCOW_TZ).date()
-    last_card_date_str = user.get("last_card_date")
-    if last_card_date_str:
-        last_card_date = datetime.fromisoformat(last_card_date_str).date()
-        if last_card_date == now_moscow and user.get("last_card"):
-            return next((c for c in cards if c.title == user["last_card"]), cards[0])
+
+    # Проверяем, есть ли карта сегодня
+    if user.last_card_date and user.last_card_date == now_moscow and user.last_card:
+        return next((c for c in cards if c.title == user.last_card), cards[0])
 
     # Выбираем новую карту
     new_card = random.choice(cards)
-    user["last_card"] = new_card.title
-    user["last_card_date"] = now_moscow.isoformat()
-    user["draw_count"] = int(user.get("draw_count", 0)) + 1
+    user.last_card = new_card.title
+    user.last_card_date = now_moscow
+    user.draw_count = (user.draw_count or 0) + 1
+
+    # Обновляем дату последней активности
+    user.last_activity_date = now_moscow
+
+    # Сохраняем изменения в базе
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
     return new_card
