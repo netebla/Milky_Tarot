@@ -94,7 +94,7 @@ async def cmd_start(message: Message) -> None:
             lambda user_id: asyncio.create_task(send_push_card(get_bot(), user_id)),
         )
 
-    photo = FSInputFile("images/welcome.jpg")
+    photo = FSInputFile("/app/src/data/images/welcome.jpg")
     await message.answer_photo(
         photo=photo,
         caption=(
