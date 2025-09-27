@@ -41,13 +41,16 @@ async def reschedule_user_pushes(bot: Bot) -> None:
             push_scheduler.remove(user_id)
 
 
-async def on_startup(bot: Bot) -> None:
-    # На этапе старта только пересоздаём задания (инициализация уже выполнена в main())
+async def on_startup(dispatcher: Dispatcher) -> None:
+    bot = dispatcher.bot
+    push_scheduler.start()
+    set_bot(bot)
+    set_scheduler(push_scheduler)
     await reschedule_user_pushes(bot)
     logger.info("Бот запущен, планировщик активен, задания восстановлены")
 
 
-async def on_shutdown(bot: Bot) -> None:
+async def on_shutdown(dispatcher: Dispatcher) -> None:
     push_scheduler.shutdown()
     logger.info("Бот остановлен")
 
@@ -56,16 +59,11 @@ async def main() -> None:
     bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
     dp = Dispatcher(storage=MemoryStorage())
 
-    # Инициализация общего состояния ДО старта поллинга, чтобы хендлеры могли использовать планировщик
-    set_bot(bot)
-    set_scheduler(push_scheduler)
-    push_scheduler.start()
-
     dp.include_router(handlers_router)
 
-    # Регистрируем только пересоздание заданий и корректное завершение
-    dp.startup.register(lambda: on_startup(bot))
-    dp.shutdown.register(lambda: on_shutdown(bot))
+    # Регистрируем хуки старта/остановки
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
 
     # Корректное завершение для локального запуска
     loop = asyncio.get_running_loop()
