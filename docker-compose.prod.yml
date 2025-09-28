@@ -23,6 +23,12 @@ services:
     depends_on:
       - db
     restart: unless-stopped
+    http_proxy: socks5://host.docker.internal:1080
+    https_proxy: socks5://host.docker.internal:1080
+  depends_on:
+    - db
+  network_mode: "bridge"  # или оставь по умолчанию
+  restart: unless-stopped
 
 volumes:
   tarot_pgdata:
