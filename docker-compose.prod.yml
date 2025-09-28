@@ -20,11 +20,8 @@ services:
       ADMIN_ID: ${ADMIN_ID}
       DATABASE_URL: postgresql://postgres:your_password@db:5432/tarot_db
       TZ: Europe/Moscow
-      http_proxy: socks5://host.docker.internal:1080
-      https_proxy: socks5://host.docker.internal:1080
     depends_on:
       - db
-    network_mode: "bridge"
     restart: unless-stopped
 
 volumes:
