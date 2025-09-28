@@ -289,3 +289,15 @@ async def send_advice(message: Message):
         )
     finally:
         session.close()
+
+
+
+
+#временный блок кода для теста llm
+
+from llm.test_llm import get_three_card_reading
+
+@router.message(lambda msg: msg.text == "Расклад три карты")
+async def three_card_handler(message: Message):
+    reading = await get_three_card_reading()
+    await message.answer(reading)
