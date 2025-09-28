@@ -24,6 +24,20 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
+
+import os
+from aiogram.filters import Command
+from aiogram.types import Message
+from datetime import date
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from db import SessionLocal, User  # твоя модель User из db.py
+
+ADMIN_IDS = os.getenv("ADMIN_ID", "")
+ADMIN_IDS = [x.strip() for x in ADMIN_IDS.split(",") if x.strip()]
+
+
+
 # Загружаем карты один раз при импорте модуля
 try:
     CARDS = load_cards()
@@ -196,15 +210,29 @@ async def cb_push_on(cb: CallbackQuery) -> None:
 
 @router.message(Command("admin_stats"))
 async def admin_stats(message: Message) -> None:
-    # Доступ только для админов (список в ADMIN_ID через запятую)
     if str(message.from_user.id) not in ADMIN_IDS:
         await message.answer("Недостаточно прав.")
         return
-    storage = UserStorage()
-    total_users, active_today, total_draws = storage.get_stats()
-    await message.answer(
-        f"Статистика:\nПользователей: {total_users}\nАктивны сегодня: {active_today}\nВытянуто карт (всего): {total_draws}"
-    ) 
+
+    session: Session = SessionLocal()
+    try:
+        # всего пользователей
+        total_users = session.query(User).count()
+
+        # активные сегодня (у кого last_activity_date = сегодня)
+        active_today = session.query(User).filter(User.last_activity_date == date.today()).count()
+
+        # всего вытянуто карт (поле draw_count)
+        total_draws = session.query(func.coalesce(func.sum(User.draw_count), 0)).scalar()
+
+        await message.answer(
+            f"📊 Статистика:\n"
+            f"👥 Пользователей: {total_users}\n"
+            f"🔥 Активны сегодня: {active_today}\n"
+            f"🃏 Вытянуто карт (всего): {total_draws}"
+        )
+    finally:
+        session.close()
 
 class AdviceCard:
     def __init__(self, title: str, description: str):
