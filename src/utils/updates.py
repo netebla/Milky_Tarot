@@ -1,6 +1,6 @@
 import asyncio
 from aiogram import Bot
-from src.utils.db import get_all_users 
+from utils.db import get_all_users 
 from src.bot.keyboards import main_menu_kb
 import os
 
