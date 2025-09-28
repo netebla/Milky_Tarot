@@ -31,7 +31,7 @@ from aiogram.types import Message
 from datetime import date
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from db import SessionLocal, User  # твоя модель User из db.py
+from utils.db import SessionLocal, User
 
 ADMIN_IDS = os.getenv("ADMIN_ID", "")
 ADMIN_IDS = [x.strip() for x in ADMIN_IDS.split(",") if x.strip()]
