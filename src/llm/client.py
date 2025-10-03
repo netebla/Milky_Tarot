@@ -8,7 +8,7 @@ from typing import Any, Dict
 import aiohttp
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or "AIzaSyA6umGCHmYuMR2m62xOL5oTvQFTzyqKqho"
-GEMINI_MODEL = os.getenv("GEMINI_MODEL") or "gemini-1.5-flash-latest"
+GEMINI_MODEL = os.getenv("GEMINI_MODEL") or "gemini-pro"
 GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     f"{GEMINI_MODEL}:generateContent"
