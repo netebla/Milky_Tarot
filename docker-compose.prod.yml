@@ -20,7 +20,12 @@ services:
       ADMIN_ID: ${ADMIN_ID}
       DATABASE_URL: postgresql://postgres:your_password@db:5432/tarot_db
       GEMINI_API_KEY: ${GEMINI_API_KEY}
+      # Настройки прокси
+      PROXY_ENABLED: "true"
+      PROXY_URL: "socks5://host.docker.internal:1080"
       TZ: Europe/Moscow
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - db
     restart: unless-stopped
