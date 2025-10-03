@@ -91,6 +91,7 @@ jobs:
             cat > .env << 'EOF'
             BOT_TOKEN=${{ secrets.BOT_TOKEN }}
             ADMIN_ID=${{ secrets.ADMIN_ID }}
+            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
             TZ=Europe/Moscow
             GITHUB_REPOSITORY_OWNER=${{ github.repository_owner }}
             EOF
@@ -108,4 +109,3 @@ jobs:
             docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d
-
