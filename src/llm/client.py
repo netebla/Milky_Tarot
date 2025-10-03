@@ -10,6 +10,10 @@ from google import genai
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
 
+# Конфигурация прокси
+PROXY_ENABLED = os.getenv("PROXY_ENABLED", "true").lower() == "true"
+PROXY_URL = os.getenv("PROXY_URL") or "socks5://user327180:ixcln2@185.113.137.117:12989"
+
 _client: Optional[genai.Client] = None
 _client_lock = asyncio.Lock()
 
@@ -27,6 +31,24 @@ def _get_api_key() -> str:
     return api_key
 
 
+def _setup_proxy_environment():
+    """Настраивает переменные окружения для работы с прокси."""
+    if not PROXY_ENABLED:
+        return
+        
+    proxy_url = PROXY_URL
+    
+    # Для библиотек, которые используют стандартные переменные окружения
+    os.environ['HTTP_PROXY'] = proxy_url
+    os.environ['HTTPS_PROXY'] = proxy_url
+    os.environ['ALL_PROXY'] = proxy_url
+    
+    # Для Python requests/urllib3
+    os.environ['http_proxy'] = proxy_url
+    os.environ['https_proxy'] = proxy_url
+    os.environ['all_proxy'] = proxy_url
+
+
 async def _get_client() -> genai.Client:
     global _client
     if _client is not None:
@@ -34,6 +56,10 @@ async def _get_client() -> genai.Client:
 
     async with _client_lock:
         if _client is None:
+            # Настраиваем прокси перед созданием клиента
+            if PROXY_ENABLED:
+                _setup_proxy_environment()
+            
             _client = genai.Client(api_key=_get_api_key())
     return _client
 
@@ -50,7 +76,8 @@ async def ask_llm(prompt: str) -> str:
                 contents=prompt,
             )
         except Exception as exc:  # noqa: BLE001 - want полный stack
-            raise GeminiClientError(f"Ошибка обращения к Gemini: {exc}") from exc
+            proxy_info = " (через прокси)" if PROXY_ENABLED else ""
+            raise GeminiClientError(f"Ошибка обращения к Gemini{proxy_info}: {exc}") from exc
 
         text = getattr(response, "text", None)
         if text:
