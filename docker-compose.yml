@@ -10,6 +10,7 @@ services:
       - BOT_TOKEN=${BOT_TOKEN}
       - ADMIN_ID=${ADMIN_ID}
       - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
       - TZ=${TZ:-Europe/Moscow}
     restart: unless-stopped
 

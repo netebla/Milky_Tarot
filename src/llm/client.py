@@ -1,60 +1,69 @@
-"""Асинхронный клиент для обращения к Google Gemini API."""
+"""Клиент для взаимодействия с Google Gemini через пакет google-genai."""
 
 from __future__ import annotations
 
+import asyncio
 import os
-from typing import Any, Dict
+from typing import Optional
 
-import aiohttp
+from google import genai
 
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or "AIzaSyA6umGCHmYuMR2m62xOL5oTvQFTzyqKqho"
-GEMINI_MODEL = os.getenv("GEMINI_MODEL") or "gemini-pro"
-GEMINI_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    f"{GEMINI_MODEL}:generateContent"
-)
+GEMINI_MODEL = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
+
+_client: Optional[genai.Client] = None
+_client_lock = asyncio.Lock()
 
 
 class GeminiClientError(RuntimeError):
     """Ошибки взаимодействия с Google Gemini."""
 
 
-def _build_payload(prompt: str) -> Dict[str, Any]:
-    return {
-        "contents": [
-            {
-                "parts": [{"text": prompt}],
-            }
-        ]
-    }
+def _get_api_key() -> str:
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        raise GeminiClientError(
+            "GEMINI_API_KEY не задан. Передайте ключ через переменные окружения."
+        )
+    return api_key
+
+
+async def _get_client() -> genai.Client:
+    global _client
+    if _client is not None:
+        return _client
+
+    async with _client_lock:
+        if _client is None:
+            _client = genai.Client(api_key=_get_api_key())
+    return _client
 
 
 async def ask_llm(prompt: str) -> str:
     """Отправить запрос в Gemini и вернуть текстовый ответ."""
-    if not GOOGLE_API_KEY or GOOGLE_API_KEY == "":
-        raise GeminiClientError("GOOGLE_API_KEY не задан. Укажите ключ в переменных окружения или client.py.")
 
-    params = {"key": GOOGLE_API_KEY}
-    payload = _build_payload(prompt)
+    client = await _get_client()
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(GEMINI_URL, params=params, json=payload) as resp:
-            if resp.status >= 400:
-                text = await resp.text()
-                raise GeminiClientError(f"Gemini API error {resp.status}: {text}")
-            data = await resp.json()
+    def _invoke() -> str:
+        try:
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+            )
+        except Exception as exc:  # noqa: BLE001 - want полный stack
+            raise GeminiClientError(f"Ошибка обращения к Gemini: {exc}") from exc
 
-    candidates = data.get("candidates") or []
-    if not candidates:
-        raise GeminiClientError("Пустой ответ от Gemini")
+        text = getattr(response, "text", None)
+        if text:
+            return text
 
-    content = candidates[0].get("content", {})
-    parts = content.get("parts") or []
-    if not parts:
-        raise GeminiClientError("В ответе Gemini отсутствуют parts")
+        # В редких случаях text может отсутствовать, собираем части вручную
+        candidates = getattr(response, "candidates", None) or []
+        for candidate in candidates:
+            content = getattr(candidate, "content", None)
+            parts = getattr(content, "parts", None) or []
+            joined = "".join(getattr(part, "text", "") for part in parts if getattr(part, "text", None))
+            if joined:
+                return joined
+        raise GeminiClientError("В ответе Gemini отсутствует текстовая часть")
 
-    text = parts[0].get("text")
-    if not text:
-        raise GeminiClientError("В ответе Gemini отсутствует текст")
-
-    return text
+    return await asyncio.to_thread(_invoke)
