@@ -1,37 +1,27 @@
 from __future__ import annotations
 
-
 import csv
-import random
 import logging
 import os
+import random
 from datetime import date
-from typing import Optional
-import asyncio
 
-from aiogram import Router, F
+from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InputFile, FSInputFile
+from aiogram.types import CallbackQuery, FSInputFile, Message
+from sqlalchemy import func
+from sqlalchemy.orm import Session
 
-from src.utils.cards_loader import GITHUB_RAW_BASE
-from utils.storage import UserStorage
-from utils.cards_loader import load_cards, choose_random_card
-from utils.app_state import get_scheduler, get_bot
+from utils.app_state import get_bot, get_scheduler
+from utils.cards_loader import GITHUB_RAW_BASE, choose_random_card, load_cards
+from utils.db import SessionLocal, User
 from utils.push import send_push_card
-from .keyboards import main_menu_kb, settings_inline_kb, choose_time_kb
+from utils.scheduler import DEFAULT_PUSH_TIME
+from .keyboards import choose_time_kb, main_menu_kb, settings_inline_kb
 
 logger = logging.getLogger(__name__)
 
 router = Router()
-
-
-import os
-from aiogram.filters import Command
-from aiogram.types import Message
-from datetime import date
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-from utils.db import SessionLocal, User
 
 ADMIN_IDS = os.getenv("ADMIN_ID", "")
 ADMIN_IDS = [x.strip() for x in ADMIN_IDS.split(",") if x.strip()]
@@ -46,12 +36,9 @@ except Exception as e:
     CARDS = []
 
 # Поддержка нескольких админов: ADMIN_ID может содержать список ID через запятую
+# Поддержка нескольких админов: ADMIN_ID может содержать список ID через запятую
 _ADMIN_RAW = os.getenv("ADMIN_ID") or os.getenv("ADMIN_IDS") or ""
 ADMIN_IDS = {s.strip() for s in _ADMIN_RAW.split(",") if s.strip()}
-
-from utils.db import SessionLocal, User
-from utils.cards_loader import load_cards, choose_random_card
-from datetime import date
 async def _send_card_of_the_day(message: Message, user_id: int) -> None:
     """Выдать карту дня, обновить статистику в Postgres через SQLAlchemy."""
     session = SessionLocal()
@@ -68,12 +55,14 @@ async def _send_card_of_the_day(message: Message, user_id: int) -> None:
             session.refresh(user)
 
         today = date.today()
-        cards = load_cards()
+        cards = CARDS or load_cards()
 
         if user.last_card and user.last_card_date == today:
             # Уже тянули карту сегодня
             card = next((c for c in cards if c.title == user.last_card), None)
             if card:
+                user.last_activity_date = today
+                session.commit()
                 await _send_card_message(message, card)
                 return
 
@@ -96,16 +85,32 @@ async def _send_card_message(message: Message, card) -> None:
 
 @router.message(Command("start"))
 async def cmd_start(message: Message) -> None:
-    storage = UserStorage()
-    user = storage.ensure_user(message.from_user.id, message.from_user.username if message.from_user else None)
+    user_id = message.from_user.id
+    username = message.from_user.username if message.from_user else None
+    today = date.today()
 
-    # Гарантируем расписание при первом старте
-    scheduler = get_scheduler()
-    if user.get("push_enabled", True):
+    with SessionLocal() as session:
+        user = session.query(User).filter(User.id == user_id).first()
+        if not user:
+            user = User(id=user_id)
+            session.add(user)
+
+        user.username = username
+        user.last_activity_date = today
+        if not user.push_time:
+            user.push_time = DEFAULT_PUSH_TIME
+        session.commit()
+
+        push_enabled = bool(user.push_enabled)
+        push_time = user.push_time or DEFAULT_PUSH_TIME
+
+    if push_enabled:
+        scheduler = get_scheduler()
+        bot = get_bot()
         scheduler.schedule_daily(
-            message.from_user.id,
-            user.get("push_time", UserStorage.DEFAULT_PUSH_TIME),
-            lambda user_id: asyncio.create_task(send_push_card(get_bot(), user_id)),
+            user_id,
+            push_time,
+            lambda job_user_id, _bot=bot: send_push_card(_bot, job_user_id),
         )
 
     photo = FSInputFile("/app/src/data/images/welcome.jpg")
@@ -139,10 +144,15 @@ async def btn_help(message: Message) -> None:
 
 @router.message(F.text == "Мои настройки")
 async def btn_settings(message: Message) -> None:
-    storage = UserStorage()
-    user = storage.get_user(message.from_user.id) or {}
-    push_enabled = bool(user.get("push_enabled", True))
-    push_time = user.get("push_time", UserStorage.DEFAULT_PUSH_TIME)
+    with SessionLocal() as session:
+        user = session.query(User).filter(User.id == message.from_user.id).first()
+
+    if not user:
+        await message.answer("Сначала нажми /start 🚀")
+        return
+
+    push_enabled = bool(user.push_enabled)
+    push_time = user.push_time or DEFAULT_PUSH_TIME
     await message.answer(
         f"Настройки пушей:\n\nСостояние: {'Включены' if push_enabled else 'Выключены'}\nВремя: {push_time}",
         reply_markup=settings_inline_kb(push_enabled),
@@ -158,15 +168,23 @@ async def cb_change_time(cb: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("set_time:"))
 async def cb_set_time(cb: CallbackQuery) -> None:
     time_str = cb.data.split(":", 1)[1]
-    storage = UserStorage()
-    storage.set_push_time(cb.from_user.id, time_str)
+    user_id = cb.from_user.id
 
-    # Перепланируем пуш на новое время
+    with SessionLocal() as session:
+        user = session.query(User).filter(User.id == user_id).first()
+        if not user:
+            user = User(id=user_id)
+            session.add(user)
+        user.push_time = time_str
+        user.push_enabled = True
+        session.commit()
+
     scheduler = get_scheduler()
+    bot = get_bot()
     scheduler.schedule_daily(
-        cb.from_user.id,
+        user_id,
         time_str,
-        lambda user_id: asyncio.create_task(send_push_card(get_bot(), user_id)),
+        lambda job_user_id, _bot=bot: send_push_card(_bot, job_user_id),
     )
 
     await cb.message.edit_text(f"Время пуша обновлено на {time_str}.")
@@ -181,8 +199,11 @@ async def cb_cancel_time(cb: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "push_off")
 async def cb_push_off(cb: CallbackQuery) -> None:
-    storage = UserStorage()
-    storage.set_push_enabled(cb.from_user.id, False)
+    with SessionLocal() as session:
+        user = session.query(User).filter(User.id == cb.from_user.id).first()
+        if user:
+            user.push_enabled = False
+            session.commit()
 
     scheduler = get_scheduler()
     scheduler.remove(cb.from_user.id)
@@ -193,15 +214,26 @@ async def cb_push_off(cb: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "push_on")
 async def cb_push_on(cb: CallbackQuery) -> None:
-    storage = UserStorage()
-    storage.set_push_enabled(cb.from_user.id, True)
+    user_id = cb.from_user.id
 
-    user = storage.get_user(cb.from_user.id) or {}
+    with SessionLocal() as session:
+        user = session.query(User).filter(User.id == user_id).first()
+        if not user:
+            user = User(id=user_id)
+            session.add(user)
+        user.push_enabled = True
+        if not user.push_time:
+            user.push_time = DEFAULT_PUSH_TIME
+        session.commit()
+
+        push_time = user.push_time or DEFAULT_PUSH_TIME
+
     scheduler = get_scheduler()
+    bot = get_bot()
     scheduler.schedule_daily(
-        cb.from_user.id,
-        user.get("push_time", UserStorage.DEFAULT_PUSH_TIME),
-        lambda user_id: asyncio.create_task(send_push_card(get_bot(), user_id)),
+        user_id,
+        push_time,
+        lambda job_user_id, _bot=bot: send_push_card(_bot, job_user_id),
     )
 
     await cb.message.edit_text("Пуши включены.")

@@ -10,10 +10,10 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 
-from utils.storage import UserStorage
-from utils.scheduler import PushScheduler
+from utils.scheduler import PushScheduler, DEFAULT_PUSH_TIME
 from utils.app_state import set_bot, set_scheduler
 from utils.push import send_push_card
+from utils.db import SessionLocal, User
 from .handlers import router as handlers_router
 
 logging.basicConfig(level=logging.INFO)
@@ -28,18 +28,26 @@ push_scheduler = PushScheduler()
 
 
 async def reschedule_user_pushes(bot: Bot) -> None:
-    """Пересоздать задания по всем пользователям согласно их настройкам."""
-    storage = UserStorage()
-    for user_id_str, user in storage.get_users().items():
-        user_id = int(user_id_str)
-        if user.get("push_enabled", True):
+    """Пересоздать задания по пользователям согласно настройкам в базе."""
+    with SessionLocal() as session:
+        users = [
+            {
+                "id": user.id,
+                "push_time": user.push_time or DEFAULT_PUSH_TIME,
+                "push_enabled": bool(user.push_enabled),
+            }
+            for user in session.query(User).all()
+        ]
+
+    for user in users:
+        if user["push_enabled"]:
             push_scheduler.schedule_daily(
-                user_id,
-                user.get("push_time", UserStorage.DEFAULT_PUSH_TIME),
-                lambda user_id: asyncio.create_task(send_push_card(bot, user_id)),
+                user["id"],
+                user["push_time"],
+                lambda job_user_id, _bot=bot: send_push_card(_bot, job_user_id),
             )
         else:
-            push_scheduler.remove(user_id)
+            push_scheduler.remove(user["id"])
 
 
 async def on_startup(bot: Bot) -> None:
@@ -63,6 +71,8 @@ async def main() -> None:
     dp = Dispatcher(storage=MemoryStorage())
 
     # Инициализация общего состояния ДО старта поллинга
+    loop = asyncio.get_running_loop()
+    push_scheduler.configure(loop)
     set_bot(bot)
     set_scheduler(push_scheduler)
 
