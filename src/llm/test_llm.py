@@ -1,4 +1,4 @@
-"""Мини-скрипт для проверки интеграции с Qwen API."""
+"""Мини-скрипт для проверки интеграции с Gemini через ask_llm."""
 
 from __future__ import annotations
 
