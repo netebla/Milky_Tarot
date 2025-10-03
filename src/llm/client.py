@@ -7,6 +7,7 @@ import os
 from typing import Optional
 
 from google import genai
+import httpx
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
 
@@ -31,22 +32,19 @@ def _get_api_key() -> str:
     return api_key
 
 
-def _setup_proxy_environment():
-    """Настраивает переменные окружения для работы с прокси."""
+def _create_http_client_with_proxy():
+    """Создает HTTP клиент с поддержкой SOCKS5 прокси."""
     if not PROXY_ENABLED:
-        return
-        
-    proxy_url = PROXY_URL
+        return None
     
-    # Для библиотек, которые используют стандартные переменные окружения
-    os.environ['HTTP_PROXY'] = proxy_url
-    os.environ['HTTPS_PROXY'] = proxy_url
-    os.environ['ALL_PROXY'] = proxy_url
+    # ПРАВИЛЬНЫЙ СИНТАКСИС ДЛЯ HTTXP
+    transport = httpx.HTTPTransport(proxy=PROXY_URL)
     
-    # Для Python requests/urllib3
-    os.environ['http_proxy'] = proxy_url
-    os.environ['https_proxy'] = proxy_url
-    os.environ['all_proxy'] = proxy_url
+    return httpx.Client(
+        transport=transport,
+        timeout=30.0,
+        follow_redirects=True
+    )
 
 
 async def _get_client() -> genai.Client:
@@ -56,11 +54,18 @@ async def _get_client() -> genai.Client:
 
     async with _client_lock:
         if _client is None:
-            # Настраиваем прокси перед созданием клиента
-            if PROXY_ENABLED:
-                _setup_proxy_environment()
+            client_options = {}
             
-            _client = genai.Client(api_key=_get_api_key())
+            if PROXY_ENABLED:
+                http_client = _create_http_client_with_proxy()
+                if http_client:
+                    client_options["http_client"] = http_client
+                    print(f"✅ Прокси настроен: {PROXY_URL}")
+            
+            _client = genai.Client(
+                api_key=_get_api_key(),
+                **client_options
+            )
     return _client
 
 
@@ -75,7 +80,7 @@ async def ask_llm(prompt: str) -> str:
                 model=GEMINI_MODEL,
                 contents=prompt,
             )
-        except Exception as exc:  # noqa: BLE001 - want полный stack
+        except Exception as exc:
             proxy_info = " (через прокси)" if PROXY_ENABLED else ""
             raise GeminiClientError(f"Ошибка обращения к Gemini{proxy_info}: {exc}") from exc
 
@@ -83,7 +88,6 @@ async def ask_llm(prompt: str) -> str:
         if text:
             return text
 
-        # В редких случаях text может отсутствовать, собираем части вручную
         candidates = getattr(response, "candidates", None) or []
         for candidate in candidates:
             content = getattr(candidate, "content", None)
