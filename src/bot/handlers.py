@@ -17,6 +17,7 @@ from utils.cards_loader import GITHUB_RAW_BASE, choose_random_card, load_cards
 from utils.db import SessionLocal, User
 from utils.push import send_push_card
 from utils.scheduler import DEFAULT_PUSH_TIME
+from llm.client import ask_llm
 from .keyboards import advice_draw_kb, choose_time_kb, main_menu_kb, settings_inline_kb
 
 logger = logging.getLogger(__name__)
@@ -352,3 +353,52 @@ async def cb_advice_draw(cb: CallbackQuery) -> None:
         photo=card.image_url(),
         caption=f"✨ Совет карт: {card.title}\n\n{card.description}"
     )
+
+
+@router.message(Command("three_cards_test"))
+async def cmd_three_cards_test(message: Message) -> None:
+    if len(CARDS) < 3:
+        await message.answer("Недостаточно карт для расклада.")
+        return
+
+    user_id = message.from_user.id
+    username = message.from_user.username if message.from_user else None
+    today = date.today()
+
+    with SessionLocal() as session:
+        user = session.query(User).filter(User.id == user_id).first()
+        if not user:
+            user = User(id=user_id)
+            session.add(user)
+
+        user.username = username
+        user.last_activity_date = today
+        if not user.push_time:
+            user.push_time = DEFAULT_PUSH_TIME
+        session.commit()
+
+    selected_cards = random.sample(CARDS, 3)
+    card_titles = [card.title for card in selected_cards]
+    cards_line = ", ".join(card_titles)
+
+    prompt = (
+        "Ты — таролог, который объясняет простым, дружелюбным языком без эзотерики. "
+        "Сделай трактовку расклада 'Три карты' для карт: "
+        f"{cards_line}. Опиши общую тему дня, кратко поясни каждую карту и дай практический совет. "
+        "Ограничь ответ 800 символами, избегай сложных эзотерических терминов."
+    )
+
+    try:
+        interpretation = await ask_llm(prompt)
+    except Exception as exc:
+        logger.exception("Ошибка при обращении к LLM: %s", exc)
+        await message.answer("Не удалось получить трактовку. Попробуй чуть позже.")
+        return
+
+    if len(interpretation) > 800:
+        interpretation = interpretation[:797] + "..."
+
+    cards_block = "\n".join(f"• {idx + 1}. {title}" for idx, title in enumerate(card_titles))
+    response = f"Расклад 'Три карты':\n{cards_block}\n\n{interpretation}"
+
+    await message.answer(response)
