@@ -292,21 +292,28 @@ ADVICE_CARDS = load_advice_cards()
 
 
 @router.message(lambda msg: msg.text == "Узнать совет карт")
-async def send_advice(message: Message):
+async def send_advice(message: Message) -> None:
     today = date.today()
-    session: Session = SessionLocal()
-    try:
-        user = session.query(User).filter(User.id == message.from_user.id).first()
-        if not user:
-            await message.answer("Сначала нажми /start 🚀")
-            return
+    user_id = message.from_user.id
+    username = message.from_user.username if message.from_user else None
 
-        # сброс при новом дне
+    with SessionLocal() as session:
+        user = session.query(User).filter(User.id == user_id).first()
+        if not user:
+            user = User(id=user_id)
+            session.add(user)
+
+        user.username = username
+        user.last_activity_date = today
+        if not user.push_time:
+            user.push_time = DEFAULT_PUSH_TIME
+
         if user.advice_last_date != today:
             user.daily_advice_count = 0
             user.advice_last_date = today
 
         if user.daily_advice_count >= 2:
+            session.commit()
             await message.answer("⚠️ Лимит советов на сегодня исчерпан. Следующие будут доступны завтра 🌙")
             return
 
@@ -315,9 +322,7 @@ async def send_advice(message: Message):
         user.advice_last_date = today
         session.commit()
 
-        await message.answer_photo(
-            photo=card.image_url(),
-            caption=f"✨ Совет карт: {card.title}\n\n{card.description}"
-        )
-    finally:
-        session.close()
+    await message.answer_photo(
+        photo=card.image_url(),
+        caption=f"✨ Совет карт: {card.title}\n\n{card.description}"
+    )
