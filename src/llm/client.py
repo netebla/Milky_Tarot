@@ -26,10 +26,10 @@ class GeminiClientError(RuntimeError):
 
 
 def _get_api_key() -> str:
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise GeminiClientError(
-            "GEMINI_API_KEY не задан. Передайте ключ через переменные окружения."
+            "GEMINI_API_KEY не задан. Передайте ключ через переменные окружения (секрет CI/CD)."
         )
     return api_key
 
