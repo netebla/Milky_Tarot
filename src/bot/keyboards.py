@@ -37,4 +37,12 @@ def choose_time_kb() -> InlineKeyboardMarkup:
     if row:
         rows.append(row)
     rows.append([InlineKeyboardButton(text="Отмена", callback_data="cancel_time")])
-    return InlineKeyboardMarkup(inline_keyboard=rows) 
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def advice_draw_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Вытянуть карту", callback_data="advice_draw")],
+        ]
+    )

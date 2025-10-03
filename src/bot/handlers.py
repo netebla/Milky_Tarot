@@ -17,7 +17,7 @@ from utils.cards_loader import GITHUB_RAW_BASE, choose_random_card, load_cards
 from utils.db import SessionLocal, User
 from utils.push import send_push_card
 from utils.scheduler import DEFAULT_PUSH_TIME
-from .keyboards import choose_time_kb, main_menu_kb, settings_inline_kb
+from .keyboards import advice_draw_kb, choose_time_kb, main_menu_kb, settings_inline_kb
 
 logger = logging.getLogger(__name__)
 
@@ -293,9 +293,33 @@ ADVICE_CARDS = load_advice_cards()
 
 @router.message(lambda msg: msg.text == "Узнать совет карт")
 async def send_advice(message: Message) -> None:
-    today = date.today()
     user_id = message.from_user.id
     username = message.from_user.username if message.from_user else None
+    today = date.today()
+
+    with SessionLocal() as session:
+        user = session.query(User).filter(User.id == user_id).first()
+        if not user:
+            user = User(id=user_id)
+            session.add(user)
+
+        user.username = username
+        user.last_activity_date = today
+        if not user.push_time:
+            user.push_time = DEFAULT_PUSH_TIME
+        session.commit()
+
+    await message.answer(
+        "Подумай, о чем ты хочешь спросить карты и жми 'Вытянуть карту'.",
+        reply_markup=advice_draw_kb(),
+    )
+
+
+@router.callback_query(F.data == "advice_draw")
+async def cb_advice_draw(cb: CallbackQuery) -> None:
+    today = date.today()
+    user_id = cb.from_user.id
+    username = cb.from_user.username if cb.from_user else None
 
     with SessionLocal() as session:
         user = session.query(User).filter(User.id == user_id).first()
@@ -314,7 +338,8 @@ async def send_advice(message: Message) -> None:
 
         if user.daily_advice_count >= 2:
             session.commit()
-            await message.answer("⚠️ Лимит советов на сегодня исчерпан. Следующие будут доступны завтра 🌙")
+            await cb.answer()
+            await cb.message.answer("⚠️ Лимит советов на сегодня исчерпан. Следующие будут доступны завтра 🌙")
             return
 
         card = random.choice(ADVICE_CARDS)
@@ -322,7 +347,8 @@ async def send_advice(message: Message) -> None:
         user.advice_last_date = today
         session.commit()
 
-    await message.answer_photo(
+    await cb.answer()
+    await cb.message.answer_photo(
         photo=card.image_url(),
         caption=f"✨ Совет карт: {card.title}\n\n{card.description}"
     )
