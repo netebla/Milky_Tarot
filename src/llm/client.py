@@ -7,13 +7,12 @@ import os
 from typing import Optional
 
 from google import genai
-import httpx
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
 
 # Конфигурация прокси
-PROXY_ENABLED = os.getenv("PROXY_ENABLED", "true").lower() == "true"
-PROXY_URL = os.getenv("PROXY_URL") or "socks5://user327180:ixcln2@185.113.137.117:12989"
+PROXY_URL = os.getenv("PROXY_URL")
+PROXY_ENABLED = (os.getenv("PROXY_ENABLED", "false").lower() == "true") and bool(PROXY_URL)
 
 _client: Optional[genai.Client] = None
 _client_lock = asyncio.Lock()
@@ -32,21 +31,6 @@ def _get_api_key() -> str:
     return api_key
 
 
-def _create_http_client_with_proxy():
-    """Создает HTTP клиент с поддержкой SOCKS5 прокси."""
-    if not PROXY_ENABLED:
-        return None
-    
-    # ПРАВИЛЬНЫЙ СИНТАКСИС ДЛЯ HTTXP
-    transport = httpx.HTTPTransport(proxy=PROXY_URL)
-    
-    return httpx.Client(
-        transport=transport,
-        timeout=30.0,
-        follow_redirects=True
-    )
-
-
 async def _get_client() -> genai.Client:
     global _client
     if _client is not None:
@@ -54,17 +38,13 @@ async def _get_client() -> genai.Client:
 
     async with _client_lock:
         if _client is None:
-            client_options = {}
-            
             if PROXY_ENABLED:
-                http_client = _create_http_client_with_proxy()
-                if http_client:
-                    client_options["http_client"] = http_client
-                    print(f"✅ Прокси настроен: {PROXY_URL}")
-            
+                for var in ("ALL_PROXY", "HTTPS_PROXY", "HTTP_PROXY"):
+                    os.environ[var] = PROXY_URL
+                print(f"✅ Прокси настроен: {PROXY_URL}")
+
             _client = genai.Client(
                 api_key=_get_api_key(),
-                **client_options
             )
     return _client
 
