@@ -92,6 +92,8 @@ jobs:
             BOT_TOKEN=${{ secrets.BOT_TOKEN }}
             ADMIN_ID=${{ secrets.ADMIN_ID }}
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+            PROXY_ENABLED=${{ secrets.PROXY_ENABLED }}
+            PROXY_URL=${{ secrets.PROXY_URL }}
             TZ=Europe/Moscow
             GITHUB_REPOSITORY_OWNER=${{ github.repository_owner }}
             EOF
