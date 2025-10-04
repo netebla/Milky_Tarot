@@ -1,13 +1,19 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 
-def main_menu_kb() -> ReplyKeyboardMarkup:
+def main_menu_kb(show_three_cards: bool = False) -> ReplyKeyboardMarkup:
+    keyboard = [
+        [KeyboardButton(text="Вытянуть карту дня")],
+        [KeyboardButton(text="Узнать совет карт")],
+    ]
+
+    if show_three_cards:
+        keyboard.append([KeyboardButton(text='"Три карты"')])
+
+    keyboard.append([KeyboardButton(text="Мои настройки"), KeyboardButton(text="Помощь")])
+
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="Вытянуть карту дня")],
-            [KeyboardButton(text="Узнать совет карт")],
-            [KeyboardButton(text="Мои настройки"), KeyboardButton(text="Помощь")],
-        ],
+        keyboard=keyboard,
         resize_keyboard=True,
         input_field_placeholder="Выберите действие",
     )

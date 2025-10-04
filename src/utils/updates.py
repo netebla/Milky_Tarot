@@ -8,6 +8,13 @@ import os
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 bot = Bot(token=BOT_TOKEN)
 
+_ADMIN_RAW = os.getenv("ADMIN_ID") or os.getenv("ADMIN_IDS") or ""
+ADMIN_IDS = {s.strip() for s in _ADMIN_RAW.split(",") if s.strip()}
+
+
+def _is_admin(user_id: int) -> bool:
+    return str(user_id) in ADMIN_IDS
+
 async def update_keyboards():
     async with bot:
         with SessionLocal() as session:
@@ -20,7 +27,7 @@ async def update_keyboards():
                     await bot.send_message(
                         chat_id=user.id,
                         text="",
-                        reply_markup=main_menu_kb()
+                        reply_markup=main_menu_kb(_is_admin(user.id))
                     )
                 except Exception as e:
                     print(f"Не удалось обновить пользователя {user.id}: {e}")

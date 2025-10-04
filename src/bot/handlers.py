@@ -40,8 +40,16 @@ except Exception as e:
     CARDS = []
 
 
+_ADMIN_RAW = os.getenv("ADMIN_ID") or os.getenv("ADMIN_IDS") or ""
+ADMIN_IDS = {s.strip() for s in _ADMIN_RAW.split(",") if s.strip()}
+
+
 class ThreeCardsStates(StatesGroup):
     waiting_question = State()
+
+
+def _is_admin(user_id: int) -> bool:
+    return str(user_id) in ADMIN_IDS
 
 
 
@@ -60,6 +68,30 @@ def _get_or_create_user(session: Session, user_id: int, username: str | None) ->
     session.commit()
     session.refresh(user)
     return user
+
+
+async def _start_three_cards_flow(message: Message, state: FSMContext) -> None:
+    if len(CARDS) < 3:
+        await message.answer("Недостаточно карт для расклада.")
+        await state.clear()
+        return
+
+    await state.clear()
+
+    user = message.from_user
+    user_id = user.id if user else None
+    username = user.username if user else None
+
+    if user_id is not None:
+        with SessionLocal() as session:
+            _get_or_create_user(session, user_id, username)
+
+    selected_cards = random.sample(CARDS, 3)
+    await state.set_state(ThreeCardsStates.waiting_question)
+    await state.update_data(three_cards=[card.title for card in selected_cards])
+    await message.answer(
+        'Задай вопрос к колоде и отправь его сообщением для расклада "Три карты".'
+    )
 
 
 async def _send_card_of_the_day(message: Message, user_id: int) -> None:
@@ -108,6 +140,7 @@ async def cmd_start(message: Message) -> None:
         user = _get_or_create_user(session, user_id, username)
         push_enabled = bool(user.push_enabled)
         push_time = user.push_time or DEFAULT_PUSH_TIME
+        show_three_cards = _is_admin(user_id)
 
     if push_enabled:
         scheduler = get_scheduler()
@@ -126,7 +159,7 @@ async def cmd_start(message: Message) -> None:
             "Каждый день я буду присылать твою персональную карту и показывать, на что стоит обратить внимание, "
             "какие скрытые возможности рядом и где сосредоточена твоя энергия. 🌟 С чего начнем сегодня? ❤️"
         ),
-        reply_markup=main_menu_kb(),
+        reply_markup=main_menu_kb(show_three_cards),
     )
 
 
@@ -162,6 +195,16 @@ async def btn_settings(message: Message) -> None:
         f"Настройки пушей:\n\nСостояние: {'Включены' if push_enabled else 'Выключены'}\nВремя: {push_time}",
         reply_markup=settings_inline_kb(push_enabled),
     )
+
+
+@router.message(F.text == '"Три карты"')
+async def btn_three_cards(message: Message, state: FSMContext) -> None:
+    user = message.from_user
+    if not user or not _is_admin(user.id):
+        await message.answer("Эта кнопка доступна только администраторам.")
+        return
+
+    await _start_three_cards_flow(message, state)
 
 
 @router.callback_query(F.data == "change_push_time")
@@ -361,24 +404,7 @@ async def cb_advice_draw(cb: CallbackQuery) -> None:
 
 @router.message(Command("three_cards_test"))
 async def cmd_three_cards_test(message: Message, state: FSMContext) -> None:
-    if len(CARDS) < 3:
-        await message.answer("Недостаточно карт для расклада.")
-        return
-
-    user = message.from_user
-    user_id = user.id if user else None
-    username = user.username if user else None
-
-    if user_id is not None:
-        with SessionLocal() as session:
-            _get_or_create_user(session, user_id, username)
-
-    selected_cards = random.sample(CARDS, 3)
-    await state.set_state(ThreeCardsStates.waiting_question)
-    await state.update_data(three_cards=[card.title for card in selected_cards])
-    await message.answer(
-        "Задай вопрос к колоде и отправь его сообщением для расклада 'Три карты'."
-    )
+    await _start_three_cards_flow(message, state)
 
 
 @router.message(ThreeCardsStates.waiting_question)
@@ -433,7 +459,7 @@ async def handle_three_cards_question(message: Message, state: FSMContext) -> No
 
     cards_titles = ", ".join(card.title for card in selected_cards)
     response_text = (
-        "Расклад 'Три карты'\n"
+        'Расклад "Три карты"\n'
         f"Вопрос: {question}\n"
         f"Карты: {cards_titles}\n\n"
         f"{interpretation}"
