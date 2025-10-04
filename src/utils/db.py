@@ -23,6 +23,10 @@ class User(Base):
     draw_count = Column(Integer, default=0)
     daily_advice_count = Column(Integer, default=0)
     advice_last_date = Column(Date, nullable=True)
+    is_subscribed = Column(Boolean, default=False)
+    subscription_plan = Column(String, nullable=True)
+    subscription_started_at = Column(DateTime, nullable=True)
+    subscription_expires_at = Column(DateTime, nullable=True)
 
 def init_db():
     Base.metadata.create_all(bind=engine)

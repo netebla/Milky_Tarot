@@ -8,6 +8,8 @@ from datetime import date
 
 from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, FSInputFile, Message
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -17,16 +19,17 @@ from utils.cards_loader import GITHUB_RAW_BASE, choose_random_card, load_cards
 from utils.db import SessionLocal, User
 from utils.push import send_push_card
 from utils.scheduler import DEFAULT_PUSH_TIME
-from llm.client import ask_llm
-from .keyboards import advice_draw_kb, choose_time_kb, main_menu_kb, settings_inline_kb
+from llm.three_cards import generate_three_card_reading
+from .keyboards import (
+    advice_draw_kb,
+    choose_time_kb,
+    main_menu_kb,
+    settings_inline_kb,
+)
 
 logger = logging.getLogger(__name__)
 
 router = Router()
-
-ADMIN_IDS = os.getenv("ADMIN_ID", "")
-ADMIN_IDS = [x.strip() for x in ADMIN_IDS.split(",") if x.strip()]
-
 
 
 # Загружаем карты один раз при импорте модуля
@@ -36,24 +39,35 @@ except Exception as e:
     logger.error("Не удалось загрузить карты: %s", e)
     CARDS = []
 
-# Поддержка нескольких админов: ADMIN_ID может содержать список ID через запятую
-# Поддержка нескольких админов: ADMIN_ID может содержать список ID через запятую
-_ADMIN_RAW = os.getenv("ADMIN_ID") or os.getenv("ADMIN_IDS") or ""
-ADMIN_IDS = {s.strip() for s in _ADMIN_RAW.split(",") if s.strip()}
+
+class ThreeCardsStates(StatesGroup):
+    waiting_question = State()
+
+
+
+def _get_or_create_user(session: Session, user_id: int, username: str | None) -> User:
+    user = session.query(User).filter(User.id == user_id).first()
+    if not user:
+        user = User(id=user_id)
+        session.add(user)
+
+    user.username = username
+    if not user.push_time:
+        user.push_time = DEFAULT_PUSH_TIME
+
+    user.last_activity_date = date.today()
+
+    session.commit()
+    session.refresh(user)
+    return user
+
+
 async def _send_card_of_the_day(message: Message, user_id: int) -> None:
     """Выдать карту дня, обновить статистику в Postgres через SQLAlchemy."""
     session = SessionLocal()
     try:
-        user = session.query(User).filter(User.id == user_id).first()
-        if not user:
-            # Создаём нового пользователя
-            user = User(
-                id=user_id,
-                username=message.from_user.username if message.from_user else None
-            )
-            session.add(user)
-            session.commit()
-            session.refresh(user)
+        username = message.from_user.username if message.from_user else None
+        user = _get_or_create_user(session, user_id, username)
 
         today = date.today()
         cards = CARDS or load_cards()
@@ -91,17 +105,7 @@ async def cmd_start(message: Message) -> None:
     today = date.today()
 
     with SessionLocal() as session:
-        user = session.query(User).filter(User.id == user_id).first()
-        if not user:
-            user = User(id=user_id)
-            session.add(user)
-
-        user.username = username
-        user.last_activity_date = today
-        if not user.push_time:
-            user.push_time = DEFAULT_PUSH_TIME
-        session.commit()
-
+        user = _get_or_create_user(session, user_id, username)
         push_enabled = bool(user.push_enabled)
         push_time = user.push_time or DEFAULT_PUSH_TIME
 
@@ -356,49 +360,84 @@ async def cb_advice_draw(cb: CallbackQuery) -> None:
 
 
 @router.message(Command("three_cards_test"))
-async def cmd_three_cards_test(message: Message) -> None:
+async def cmd_three_cards_test(message: Message, state: FSMContext) -> None:
     if len(CARDS) < 3:
         await message.answer("Недостаточно карт для расклада.")
         return
 
-    user_id = message.from_user.id
-    username = message.from_user.username if message.from_user else None
-    today = date.today()
+    user = message.from_user
+    user_id = user.id if user else None
+    username = user.username if user else None
 
-    with SessionLocal() as session:
-        user = session.query(User).filter(User.id == user_id).first()
-        if not user:
-            user = User(id=user_id)
-            session.add(user)
-
-        user.username = username
-        user.last_activity_date = today
-        if not user.push_time:
-            user.push_time = DEFAULT_PUSH_TIME
-        session.commit()
+    if user_id is not None:
+        with SessionLocal() as session:
+            _get_or_create_user(session, user_id, username)
 
     selected_cards = random.sample(CARDS, 3)
-    card_titles = [card.title for card in selected_cards]
-    cards_line = ", ".join(card_titles)
-
-    prompt = (
-        "Ты — таролог, который объясняет простым, дружелюбным языком без эзотерики. "
-        "Сделай трактовку расклада 'Три карты' для карт: "
-        f"{cards_line}. Опиши общую тему дня, кратко поясни каждую карту и дай практический совет. "
-        "Ограничь ответ 800 символами, избегай сложных эзотерических терминов."
+    await state.set_state(ThreeCardsStates.waiting_question)
+    await state.update_data(three_cards=[card.title for card in selected_cards])
+    await message.answer(
+        "Задай вопрос к колоде и отправь его сообщением для расклада 'Три карты'."
     )
 
+
+@router.message(ThreeCardsStates.waiting_question)
+async def handle_three_cards_question(message: Message, state: FSMContext) -> None:
+    if len(CARDS) < 3:
+        await message.answer("Недостаточно карт для расклада.")
+        await state.clear()
+        return
+
+    data = await state.get_data()
+    stored_titles = data.get("three_cards") or []
+
+    if stored_titles and len(stored_titles) >= 3:
+        selected_cards = []
+        for title in stored_titles:
+            card = next((c for c in CARDS if c.title == title), None)
+            if card:
+                selected_cards.append(card)
+        if len(selected_cards) < 3:
+            selected_cards = random.sample(CARDS, 3)
+    else:
+        selected_cards = random.sample(CARDS, 3)
+
+    question = (message.text or message.caption or "").strip()
+    if not question:
+        await message.answer("Пожалуйста, сформулируй вопрос текстом.")
+        return
+
+    user = message.from_user
+    user_id = user.id if user else None
+    username = user.username if user else None
+
+    if user_id is not None:
+        with SessionLocal() as session:
+            _get_or_create_user(session, user_id, username)
+
+    await message.answer("Колода тасуется... Подожди несколько секунд ✨")
+
     try:
-        interpretation = await ask_llm(prompt)
+        interpretation = await generate_three_card_reading(selected_cards, question)
     except Exception as exc:
         logger.exception("Ошибка при обращении к LLM: %s", exc)
         await message.answer("Не удалось получить трактовку. Попробуй чуть позже.")
+        await state.clear()
         return
 
-    if len(interpretation) > 800:
-        interpretation = interpretation[:797] + "..."
+    for card in selected_cards:
+        await message.answer_photo(
+            photo=card.image_url(),
+            caption=card.title,
+        )
 
-    cards_block = "\n".join(f"• {idx + 1}. {title}" for idx, title in enumerate(card_titles))
-    response = f"Расклад 'Три карты':\n{cards_block}\n\n{interpretation}"
+    cards_titles = ", ".join(card.title for card in selected_cards)
+    response_text = (
+        "Расклад 'Три карты'\n"
+        f"Вопрос: {question}\n"
+        f"Карты: {cards_titles}\n\n"
+        f"{interpretation}"
+    )
 
-    await message.answer(response)
+    await message.answer(response_text)
+    await state.clear()

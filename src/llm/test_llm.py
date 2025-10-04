@@ -1,28 +1,13 @@
-"""Мини-скрипт для проверки интеграции с Gemini через ask_llm."""
+"""Мини-скрипт для проверки интеграции с Gemini через премиальный расклад."""
 
 from __future__ import annotations
 
-import csv
 import random
 
-from llm.client import ask_llm
-
-CSV_FILE = "src/data/cards_advice.csv"
-
-
-def get_random_cards(n: int = 3) -> list[str]:
-    cards: list[str] = []
-    with open(CSV_FILE, "r", encoding="utf-8") as f:
-        reader = csv.reader(f, delimiter=";")
-        for row in reader:
-            if row:
-                cards.append(row[0].strip())
-    if len(cards) < n:
-        raise ValueError("Недостаточно карт для генерации расклада")
-    return random.sample(cards, n)
+from utils.cards_loader import load_cards
+from llm.three_cards import generate_three_card_reading
 
 
-async def get_three_card_reading() -> str:
-    cards = get_random_cards()
-    prompt = f"Сделай трактовку расклада три карты: {', '.join(cards)}"
-    return await ask_llm(prompt)
+async def get_three_card_reading(question: str = "") -> str:
+    cards = random.sample(load_cards(), 3)
+    return await generate_three_card_reading(cards, question)
