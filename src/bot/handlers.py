@@ -7,12 +7,13 @@ import random
 from datetime import date
 from urllib.parse import quote
 
+import httpx
 from aiogram import F, Router
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, FSInputFile, Message, URLInputFile
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -53,6 +54,12 @@ class ThreeCardsStates(StatesGroup):
 def _is_admin(user_id: int) -> bool:
     return str(user_id) in ADMIN_IDS
 
+
+async def _fetch_image_bytes(url: str) -> bytes:
+    async with httpx.AsyncClient(timeout=10) as client:
+        response = await client.get(url)
+        response.raise_for_status()
+        return response.content
 
 
 def _get_or_create_user(session: Session, user_id: int, username: str | None) -> User:
@@ -126,8 +133,12 @@ async def _send_card_of_the_day(message: Message, user_id: int) -> None:
 async def _send_card_message(message: Message, card) -> None:
     caption = f"Карта дня: {card.title}\n\n{card.description}"
     try:
-        await message.answer_photo(URLInputFile(card.image_url()), caption=caption)
-    except TelegramBadRequest:
+        image_bytes = await _fetch_image_bytes(card.image_url())
+        await message.answer_photo(
+            BufferedInputFile(image_bytes, filename=f"{card.title}.jpg"),
+            caption=caption,
+        )
+    except (httpx.HTTPError, TelegramBadRequest, TelegramNetworkError):
         await message.answer(caption)
 
 
@@ -398,11 +409,12 @@ async def cb_advice_draw(cb: CallbackQuery) -> None:
 
     await cb.answer()
     try:
+        image_bytes = await _fetch_image_bytes(card.image_url())
         await cb.message.answer_photo(
-            photo=URLInputFile(card.image_url()),
+            photo=BufferedInputFile(image_bytes, filename=f"{card.title}.jpg"),
             caption=f"✨ Совет карт: {card.title}\n\n{card.description}"
         )
-    except TelegramBadRequest:
+    except (httpx.HTTPError, TelegramBadRequest, TelegramNetworkError):
         await cb.message.answer(
             f"✨ Совет карт: {card.title}\n\n{card.description}"
         )
@@ -459,11 +471,12 @@ async def handle_three_cards_question(message: Message, state: FSMContext) -> No
 
     for card in selected_cards:
         try:
+            image_bytes = await _fetch_image_bytes(card.image_url())
             await message.answer_photo(
-                photo=URLInputFile(card.image_url()),
+                photo=BufferedInputFile(image_bytes, filename=f"{card.title}.jpg"),
                 caption=card.title,
             )
-        except TelegramBadRequest:
+        except (httpx.HTTPError, TelegramBadRequest, TelegramNetworkError):
             await message.answer(card.title)
 
     cards_titles = ", ".join(card.title for card in selected_cards)
