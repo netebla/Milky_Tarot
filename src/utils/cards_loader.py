@@ -1,19 +1,15 @@
-"""
-Утилиты загрузки карт Таро через GitHub.
-
-- Загружает карты из CSV по пути src/data/cards.csv (из репозитория локально)
-- Формат CSV: title;description
-- Для картинок формирует URL в GitHub
-- Предоставляет функцию выбора карты дня
-"""
+"""Утилиты загрузки карт Таро через GitHub."""
 
 from __future__ import annotations
+
 import csv
 import os
 import random
 from dataclasses import dataclass
-from typing import List
 from datetime import datetime
+from typing import List
+from urllib.parse import quote
+
 import pytz
 
 # Базовый URL для картинок в GitHub
@@ -26,15 +22,18 @@ CARDS_PATH = os.path.join(DATA_DIR, "cards.csv")
 MOSCOW_TZ = pytz.timezone("Europe/Moscow")
 
 
+def _normalize_title(title: str) -> str:
+    return quote(title.strip().replace(" ", "_"))
+
+
 @dataclass
 class Card:
     title: str
     description: str
 
     def image_url(self) -> str:
-        """Вернуть URL к изображению в GitHub."""
-        normalized = self.title.strip().replace(" ", "_")
-        return f"{GITHUB_RAW_BASE}/{normalized}.jpg"
+        """Вернуть URL к изображению в GitHub с корректным кодированием имени."""
+        return f"{GITHUB_RAW_BASE}/{_normalize_title(self.title)}.jpg"
 
 
 def load_cards() -> List[Card]:

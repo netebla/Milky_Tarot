@@ -5,12 +5,14 @@ import logging
 import os
 import random
 from datetime import date
+from urllib.parse import quote
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, FSInputFile, Message
+from aiogram.types import CallbackQuery, FSInputFile, Message, URLInputFile
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -123,10 +125,9 @@ async def _send_card_of_the_day(message: Message, user_id: int) -> None:
 
 async def _send_card_message(message: Message, card) -> None:
     caption = f"Карта дня: {card.title}\n\n{card.description}"
-    image_url = card.image_url()  # берём ссылку на GitHub
-    if image_url:
-        await message.answer_photo(image_url, caption=caption)
-    else:
+    try:
+        await message.answer_photo(URLInputFile(card.image_url()), caption=caption)
+    except TelegramBadRequest:
         await message.answer(caption)
 
 
@@ -321,7 +322,7 @@ class AdviceCard:
 
     def image_url(self) -> str:
         normalized = self.title.strip().replace(" ", "_")
-        return f"{GITHUB_RAW_BASE}/{normalized}.jpg"
+        return f"{GITHUB_RAW_BASE}/{quote(normalized)}.jpg"
 
 
 def load_advice_cards() -> list[AdviceCard]:
@@ -396,10 +397,15 @@ async def cb_advice_draw(cb: CallbackQuery) -> None:
         session.commit()
 
     await cb.answer()
-    await cb.message.answer_photo(
-        photo=card.image_url(),
-        caption=f"✨ Совет карт: {card.title}\n\n{card.description}"
-    )
+    try:
+        await cb.message.answer_photo(
+            photo=URLInputFile(card.image_url()),
+            caption=f"✨ Совет карт: {card.title}\n\n{card.description}"
+        )
+    except TelegramBadRequest:
+        await cb.message.answer(
+            f"✨ Совет карт: {card.title}\n\n{card.description}"
+        )
 
 
 @router.message(Command("three_cards_test"))
@@ -452,10 +458,13 @@ async def handle_three_cards_question(message: Message, state: FSMContext) -> No
         return
 
     for card in selected_cards:
-        await message.answer_photo(
-            photo=card.image_url(),
-            caption=card.title,
-        )
+        try:
+            await message.answer_photo(
+                photo=URLInputFile(card.image_url()),
+                caption=card.title,
+            )
+        except TelegramBadRequest:
+            await message.answer(card.title)
 
     cards_titles = ", ".join(card.title for card in selected_cards)
     response_text = (
