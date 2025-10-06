@@ -30,8 +30,8 @@ def _normalized_filename(title: str) -> str:
     return quote(title.strip().replace(" ", "_"))
 
 
-def _normalized_title(title: str) -> str:
-    return title.strip()
+def _normalized_local_filename(title: str) -> str:
+    return title.strip().replace(" ", "_")
 
 
 @dataclass
@@ -40,7 +40,7 @@ class Card:
     description: str
 
     def image_path(self) -> Path:
-        return IMAGES_DIR / f"{_normalized_title(self.title).replace(' ', '_')}.jpg"
+        return IMAGES_DIR / f"{_normalized_local_filename(self.title)}.jpg"
 
     def image_url(self) -> str:
         return f"{GITHUB_RAW_BASE}/{_normalized_filename(self.title)}.jpg"
@@ -108,4 +108,5 @@ __all__ = [
     "load_advice_cards",
     "choose_random_card",
     "MOSCOW_TZ",
+    "IMAGES_DIR",
 ]
