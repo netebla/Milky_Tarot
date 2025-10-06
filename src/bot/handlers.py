@@ -174,19 +174,28 @@ async def cmd_start(message: Message) -> None:
         scheduler.schedule_daily(
             user_id,
             push_time,
-            lambda job_user_id, _bot=bot: send_push_card(_bot, job_user_id),
+            lambda user_id, _bot=bot: send_push_card(_bot, user_id),
         )
 
-    photo = FSInputFile("/app/src/data/images/welcome.jpg")
-    await message.answer_photo(
-        photo=photo,
-        caption=(
-            "👋 Привет! Рада познакомиться и видеть тебя здесь. Я — Милки, твой спутник в мире карт. "
-            "Каждый день я буду присылать твою персональную карту и показывать, на что стоит обратить внимание, "
-            "какие скрытые возможности рядом и где сосредоточена твоя энергия. 🌟 С чего начнем сегодня? ❤️"
-        ),
-        reply_markup=main_menu_kb(show_three_cards),
+    welcome_path = Path("/app/src/data/images/welcome.jpg")
+    welcome_text = (
+        "👋 Привет! Рада познакомиться и видеть тебя здесь. Я — Милки, твой спутник в мире карт. "
+        "Каждый день я буду присылать твою персональную карту и показывать, на что стоит обратить внимание, "
+        "какие скрытые возможности рядом и где сосредоточена твоя энергия. 🌟 С чего начнем сегодня? ❤️"
     )
+
+    if welcome_path.exists():
+        try:
+            await message.answer_photo(
+                photo=BufferedInputFile(welcome_path.read_bytes(), filename=welcome_path.name),
+                caption=welcome_text,
+                reply_markup=main_menu_kb(show_three_cards),
+            )
+            return
+        except TelegramBadRequest:
+            pass
+
+    await message.answer(welcome_text, reply_markup=main_menu_kb(show_three_cards))
 
 
 @router.message(Command("help"))
@@ -258,7 +267,7 @@ async def cb_set_time(cb: CallbackQuery) -> None:
     scheduler.schedule_daily(
         user_id,
         time_str,
-        lambda job_user_id, _bot=bot: send_push_card(_bot, job_user_id),
+        lambda user_id, _bot=bot: send_push_card(_bot, user_id),
     )
 
     await cb.message.edit_text(f"Время пуша обновлено на {time_str}.")
@@ -307,7 +316,7 @@ async def cb_push_on(cb: CallbackQuery) -> None:
     scheduler.schedule_daily(
         user_id,
         push_time,
-        lambda job_user_id, _bot=bot: send_push_card(_bot, job_user_id),
+        lambda user_id, _bot=bot: send_push_card(_bot, user_id),
     )
 
     await cb.message.edit_text("Пуши включены.")

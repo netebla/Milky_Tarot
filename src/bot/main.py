@@ -44,7 +44,7 @@ async def reschedule_user_pushes(bot: Bot) -> None:
             push_scheduler.schedule_daily(
                 user["id"],
                 user["push_time"],
-                lambda job_user_id, _bot=bot: send_push_card(_bot, job_user_id),
+                lambda user_id, _bot=bot: send_push_card(_bot, user_id),
             )
         else:
             push_scheduler.remove(user["id"])
