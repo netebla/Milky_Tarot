@@ -26,12 +26,16 @@ GITHUB_RAW_BASE = "https://raw.githubusercontent.com/netebla/Milky_Tarot/main/sr
 MOSCOW_TZ = pytz.timezone("Europe/Moscow")
 
 
+def _clean_title(raw: str) -> str:
+    return raw.replace("\ufeff", "").strip()
+
+
 def _normalized_filename(title: str) -> str:
-    return quote(title.strip().replace(" ", "_"))
+    return quote(_clean_title(title).replace(" ", "_"))
 
 
 def _normalized_local_filename(title: str) -> str:
-    return title.strip().replace(" ", "_")
+    return _clean_title(title).replace(" ", "_")
 
 
 @dataclass
@@ -56,7 +60,7 @@ def load_cards() -> List[Card]:
         for row in reader:
             if len(row) < 2:
                 continue
-            title, description = row[0].strip(), row[1].strip()
+            title, description = _clean_title(row[0]), row[1].strip()
             if title and description:
                 cards.append(Card(title=title, description=description))
 
@@ -79,7 +83,7 @@ def load_advice_cards() -> List[Card]:
         for row in reader:
             if len(row) < 2:
                 continue
-            cards.append(Card(title=row[0].strip(), description=row[1].strip()))
+            cards.append(Card(title=_clean_title(row[0]), description=row[1].strip()))
     return cards
 
 

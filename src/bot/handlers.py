@@ -342,11 +342,11 @@ async def admin_stats(message: Message) -> None:
 
 class AdviceCard:
     def __init__(self, title: str, description: str):
-        self.title = title
+        self.title = title.replace("\ufeff", "").strip()
         self.description = description
 
     def image_url(self) -> str:
-        normalized = self.title.strip().replace(" ", "_")
+        normalized = self.title.replace(" ", "_")
         return f"{GITHUB_RAW_BASE}/{quote(normalized)}.jpg"
 
     def image_path(self) -> Path:
