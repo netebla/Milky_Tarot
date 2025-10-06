@@ -1,29 +1,37 @@
-"""Утилиты загрузки карт Таро через GitHub."""
+"""Утилиты для загрузки карт Таро и выбора карт дня."""
 
 from __future__ import annotations
 
 import csv
-import os
 import random
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import List
 from urllib.parse import quote
 
 import pytz
+from sqlalchemy.orm import Session
 
-# Базовый URL для картинок в GitHub
+from .db import User
+
+# Пути к данным и изображениям
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+CARDS_PATH = DATA_DIR / "cards.csv"
+IMAGES_DIR = DATA_DIR / "images"
+
+# Публичный fallback (на случай, если потребуется URL)
 GITHUB_RAW_BASE = "https://raw.githubusercontent.com/netebla/Milky_Tarot/main/src/data/images"
-
-# Путь к CSV локально (он нужен только для названий и описаний)
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
-CARDS_PATH = os.path.join(DATA_DIR, "cards.csv")
 
 MOSCOW_TZ = pytz.timezone("Europe/Moscow")
 
 
-def _normalize_title(title: str) -> str:
+def _normalized_filename(title: str) -> str:
     return quote(title.strip().replace(" ", "_"))
+
+
+def _normalized_title(title: str) -> str:
+    return title.strip()
 
 
 @dataclass
@@ -31,21 +39,22 @@ class Card:
     title: str
     description: str
 
+    def image_path(self) -> Path:
+        return IMAGES_DIR / f"{_normalized_title(self.title).replace(' ', '_')}.jpg"
+
     def image_url(self) -> str:
-        """Вернуть URL к изображению в GitHub с корректным кодированием имени."""
-        return f"{GITHUB_RAW_BASE}/{_normalize_title(self.title)}.jpg"
+        return f"{GITHUB_RAW_BASE}/{_normalized_filename(self.title)}.jpg"
 
 
 def load_cards() -> List[Card]:
-    """Загрузить все карты из CSV."""
-    if not os.path.exists(CARDS_PATH):
+    if not CARDS_PATH.exists():
         raise FileNotFoundError(f"Не найден CSV с картами: {CARDS_PATH}")
 
     cards: List[Card] = []
-    with open(CARDS_PATH, "r", encoding="utf-8") as f:
+    with CARDS_PATH.open("r", encoding="utf-8") as f:
         reader = csv.reader(f, delimiter=";")
         for row in reader:
-            if not row or len(row) < 2:
+            if len(row) < 2:
                 continue
             title, description = row[0].strip(), row[1].strip()
             if title and description:
@@ -56,51 +65,47 @@ def load_cards() -> List[Card]:
 
     return cards
 
-CARDS_ADVICE_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "cards_advice.csv")
+
+CARDS_ADVICE_PATH = DATA_DIR / "cards_advice.csv"
+
 
 def load_advice_cards() -> List[Card]:
-    cards = []
-    with open(CARDS_ADVICE_PATH, newline="", encoding="utf-8") as csvfile:
-        reader = csv.DictReader(csvfile)
+    if not CARDS_ADVICE_PATH.exists():
+        raise FileNotFoundError(f"Не найден CSV с советами: {CARDS_ADVICE_PATH}")
+
+    cards: List[Card] = []
+    with CARDS_ADVICE_PATH.open("r", encoding="utf-8") as f:
+        reader = csv.reader(f, delimiter=";")
         for row in reader:
-            cards.append(Card(title=row["title"], description=row["description"]))
+            if len(row) < 2:
+                continue
+            cards.append(Card(title=row[0].strip(), description=row[1].strip()))
     return cards
 
 
-
-
-
-import random
-from datetime import datetime
-from typing import List
-from sqlalchemy.orm import Session
-from .db import User
-from .cards_loader import Card, MOSCOW_TZ  # предполагаю, что Card и часовой пояс уже есть
-
 def choose_random_card(user: User, cards: List[Card], db: Session) -> Card:
-    """
-    Выбрать карту дня для пользователя.
-    - Если карта уже выбрана сегодня, вернуть её.
-    - Иначе выбрать случайную, обновить last_card, last_card_date и draw_count в базе.
-    """
+    """Выбрать карту дня. Если уже тянули сегодня — вернуть прежнюю."""
     now_moscow = datetime.now(MOSCOW_TZ).date()
 
-    # Проверяем, есть ли карта сегодня
     if user.last_card_date and user.last_card_date == now_moscow and user.last_card:
         return next((c for c in cards if c.title == user.last_card), cards[0])
 
-    # Выбираем новую карту
     new_card = random.choice(cards)
     user.last_card = new_card.title
     user.last_card_date = now_moscow
     user.draw_count = (user.draw_count or 0) + 1
-
-    # Обновляем дату последней активности
     user.last_activity_date = now_moscow
 
-    # Сохраняем изменения в базе
     db.add(user)
     db.commit()
     db.refresh(user)
-
     return new_card
+
+
+__all__ = [
+    "Card",
+    "load_cards",
+    "load_advice_cards",
+    "choose_random_card",
+    "MOSCOW_TZ",
+]

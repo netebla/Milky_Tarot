@@ -5,6 +5,7 @@ import logging
 import os
 import random
 from datetime import date
+from pathlib import Path
 from urllib.parse import quote
 
 import httpx
@@ -18,7 +19,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from utils.app_state import get_bot, get_scheduler
-from utils.cards_loader import GITHUB_RAW_BASE, choose_random_card, load_cards
+from utils.cards_loader import GITHUB_RAW_BASE, IMAGES_DIR, choose_random_card, load_cards
 from utils.db import SessionLocal, User
 from utils.push import send_push_card
 from utils.scheduler import DEFAULT_PUSH_TIME
@@ -132,6 +133,19 @@ async def _send_card_of_the_day(message: Message, user_id: int) -> None:
 
 async def _send_card_message(message: Message, card) -> None:
     caption = f"Карта дня: {card.title}\n\n{card.description}"
+    local_path = getattr(card, "image_path", None)
+    if callable(local_path):
+        path = local_path()
+        if path.exists():
+            try:
+                await message.answer_photo(
+                    BufferedInputFile(path.read_bytes(), filename=path.name),
+                    caption=caption,
+                )
+                return
+            except TelegramBadRequest:
+                pass
+
     try:
         image_bytes = await _fetch_image_bytes(card.image_url())
         await message.answer_photo(
@@ -335,6 +349,9 @@ class AdviceCard:
         normalized = self.title.strip().replace(" ", "_")
         return f"{GITHUB_RAW_BASE}/{quote(normalized)}.jpg"
 
+    def image_path(self) -> Path:
+        return IMAGES_DIR / f"{self.title.strip().replace(' ', '_')}.jpg"
+
 
 def load_advice_cards() -> list[AdviceCard]:
     cards = []
@@ -408,6 +425,20 @@ async def cb_advice_draw(cb: CallbackQuery) -> None:
         session.commit()
 
     await cb.answer()
+    local_path = getattr(card, "image_path", None)
+    if callable(local_path):
+        path = local_path()
+        if path.exists():
+            try:
+                await cb.message.answer_photo(
+                    photo=BufferedInputFile(path.read_bytes(), filename=path.name),
+                    caption=f"✨ Совет карт: {card.title}\n\n{card.description}"
+                )
+                await cb.answer()
+                return
+            except TelegramBadRequest:
+                pass
+
     try:
         image_bytes = await _fetch_image_bytes(card.image_url())
         await cb.message.answer_photo(
@@ -470,13 +501,30 @@ async def handle_three_cards_question(message: Message, state: FSMContext) -> No
         return
 
     for card in selected_cards:
-        try:
-            image_bytes = await _fetch_image_bytes(card.image_url())
-            await message.answer_photo(
-                photo=BufferedInputFile(image_bytes, filename=f"{card.title}.jpg"),
-                caption=card.title,
-            )
-        except (httpx.HTTPError, TelegramBadRequest, TelegramNetworkError):
+        sent = False
+        local_path = getattr(card, "image_path", None)
+        if callable(local_path):
+            path = local_path()
+            if path.exists():
+                try:
+                    await message.answer_photo(
+                        photo=BufferedInputFile(path.read_bytes(), filename=path.name),
+                        caption=card.title,
+                    )
+                    sent = True
+                except TelegramBadRequest:
+                    sent = False
+        if not sent:
+            try:
+                image_bytes = await _fetch_image_bytes(card.image_url())
+                await message.answer_photo(
+                    photo=BufferedInputFile(image_bytes, filename=f"{card.title}.jpg"),
+                    caption=card.title,
+                )
+                sent = True
+            except (httpx.HTTPError, TelegramBadRequest, TelegramNetworkError):
+                sent = False
+        if not sent:
             await message.answer(card.title)
 
     cards_titles = ", ".join(card.title for card in selected_cards)
