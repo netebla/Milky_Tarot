@@ -171,9 +171,11 @@ async def cmd_start(message: Message) -> None:
     if push_enabled:
         scheduler = get_scheduler()
         bot = get_bot()
-        scheduler.schedule_daily(
+        # Раньше планировалось ежедневно; теперь отправляем каждые 3 дня
+        scheduler.schedule_every_n_days(
             user_id,
             push_time,
+            3,
             lambda user_id, _bot=bot: send_push_card(_bot, user_id),
         )
 
@@ -264,9 +266,11 @@ async def cb_set_time(cb: CallbackQuery) -> None:
 
     scheduler = get_scheduler()
     bot = get_bot()
-    scheduler.schedule_daily(
+    # Пользователь изменил время -> планируем пуш каждые 3 дня в новое время
+    scheduler.schedule_every_n_days(
         user_id,
         time_str,
+        3,
         lambda user_id, _bot=bot: send_push_card(_bot, user_id),
     )
 
@@ -313,9 +317,11 @@ async def cb_push_on(cb: CallbackQuery) -> None:
 
     scheduler = get_scheduler()
     bot = get_bot()
-    scheduler.schedule_daily(
+    # Включаем пуши: планируем отправку каждые 3 дня
+    scheduler.schedule_every_n_days(
         user_id,
         push_time,
+        3,
         lambda user_id, _bot=bot: send_push_card(_bot, user_id),
     )
 

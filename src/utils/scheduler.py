@@ -8,6 +8,7 @@ from typing import Any, Callable, Optional
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,46 @@ class PushScheduler:
         self.scheduler.add_job(wrapped, trigger, id=job_id, kwargs={"user_id": user_id}, replace_existing=True)
         logger.info("Запланирован ежедневный пуш для пользователя %s на %02d:%02d", user_id, hour, minute)
 
+    def schedule_every_n_days(self, user_id: int, time_str: str, n_days: int, callback: Callable[..., Any]) -> None:
+        """
+        Запланировать задачу с интервалом в n_days: каждый n-й день в заданное время HH:MM.
+
+        Реализация использует IntervalTrigger с началом в ближайшее будущее в указанное время.
+        """
+        if n_days <= 0:
+            logger.warning("Неверный интервал n_days=%s для пользователя %s", n_days, user_id)
+            return
+
+        try:
+            hour, minute = map(int, time_str.split(":"))
+        except ValueError as exc:
+            logger.warning("Некорректное время '%s' для пользователя %s: %s", time_str, user_id, exc)
+            return
+
+        # Удаляем старую задачу, если есть
+        job_id = self._job_id(user_id)
+        self.remove(user_id)
+
+        # Вычисляем ближайшую дату/время старта для запуска в нужный час:мин
+        from datetime import datetime, time, timedelta
+
+        now = datetime.now(self.timezone)
+        target_time = time(hour=hour, minute=minute, tzinfo=self.timezone)
+        today_target = datetime.combine(now.date(), target_time)
+        if today_target <= now:
+            # если время уже прошло сегодня — старт на завтра
+            today_target = today_target + timedelta(days=1)
+
+        trigger = IntervalTrigger(days=n_days, start_date=today_target, timezone=self.timezone)
+        wrapped = self._wrap_callback(callback)
+        self.scheduler.add_job(
+            wrapped,
+            trigger,
+            id=job_id,
+            kwargs={"user_id": user_id},
+            replace_existing=True,
+        )
+        logger.info("Запланирован пуш для пользователя %s каждые %s дня(й) в %02d:%02d", user_id, n_days, hour, minute)
     def remove(self, user_id: int) -> None:
         job_id = self._job_id(user_id)
         job = self.scheduler.get_job(job_id)

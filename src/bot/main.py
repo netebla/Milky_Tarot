@@ -41,9 +41,11 @@ async def reschedule_user_pushes(bot: Bot) -> None:
 
     for user in users:
         if user["push_enabled"]:
-            push_scheduler.schedule_daily(
+            # Раньше планировалось ежедневно; теперь отправляем каждые 3 дня
+            push_scheduler.schedule_every_n_days(
                 user["id"],
                 user["push_time"],
+                3,
                 lambda user_id, _bot=bot: send_push_card(_bot, user_id),
             )
         else:
