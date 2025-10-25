@@ -29,6 +29,8 @@ from .keyboards import (
     choose_time_kb,
     main_menu_kb,
     settings_inline_kb,
+    choose_tz_offset_kb,
+    onboarding_name_kb,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,6 +52,13 @@ ADMIN_IDS = {s.strip() for s in _ADMIN_RAW.split(",") if s.strip()}
 
 class ThreeCardsStates(StatesGroup):
     waiting_question = State()
+
+
+class OnboardingStates(StatesGroup):
+    asking_name = State()
+    waiting_name_manual = State()
+    asking_birth_date = State()
+    asking_tz = State()
 
 
 def _is_admin(user_id: int) -> bool:
@@ -157,7 +166,7 @@ async def _send_card_message(message: Message, card) -> None:
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message) -> None:
+async def cmd_start(message: Message, state: FSMContext) -> None:
     user_id = message.from_user.id
     username = message.from_user.username if message.from_user else None
     today = date.today()
@@ -166,24 +175,27 @@ async def cmd_start(message: Message) -> None:
         user = _get_or_create_user(session, user_id, username)
         push_enabled = bool(user.push_enabled)
         push_time = user.push_time or DEFAULT_PUSH_TIME
+        tz_offset = getattr(user, "tz_offset_hours", 0) or 0
+        display_name = getattr(user, "display_name", None)
+        birth_date = getattr(user, "birth_date", None)
         show_three_cards = _is_admin(user_id)
 
+    # Планируем ежедневный пуш с учётом смещения
     if push_enabled:
         scheduler = get_scheduler()
         bot = get_bot()
-        # Раньше планировалось ежедневно; теперь отправляем каждые 3 дня
-        scheduler.schedule_every_n_days(
+        scheduler.schedule_daily_with_offset(
             user_id,
             push_time,
-            3,
+            tz_offset,
             lambda user_id, _bot=bot: send_push_card(_bot, user_id),
         )
 
     welcome_path = Path("/app/src/data/images/welcome.jpg")
     welcome_text = (
-        "👋 Привет! Рада познакомиться и видеть тебя здесь. Я — Милки, твой спутник в мире карт. "
-        "Каждый день я буду присылать твою персональную карту и показывать, на что стоит обратить внимание, "
-        "какие скрытые возможности рядом и где сосредоточена твоя энергия. 🌟 С чего начнем сегодня? ❤️"
+        "👋 Привет! Я — Милки, твой спутник в мире карт.\n\n"
+        "Помогу с ‘Картой дня’, советом и глубокими раскладами.\n"
+        "Давай подстроим бота под тебя: как к тебе обращаться, дата рождения и удобный часовой пояс."
     )
 
     if welcome_path.exists():
@@ -191,13 +203,27 @@ async def cmd_start(message: Message) -> None:
             await message.answer_photo(
                 photo=BufferedInputFile(welcome_path.read_bytes(), filename=welcome_path.name),
                 caption=welcome_text,
-                reply_markup=main_menu_kb(show_three_cards),
+                reply_markup=None,
             )
-            return
         except TelegramBadRequest:
             pass
+    else:
+        await message.answer(welcome_text)
 
-    await message.answer(welcome_text, reply_markup=main_menu_kb(show_three_cards))
+    # Если не заполнены обязательные поля — запускаем онбординг
+    if not display_name or birth_date is None:
+        has_username = bool(message.from_user and (message.from_user.username or message.from_user.full_name))
+        await message.answer(
+            "Сначала имя: выбрать из профиля или ввести вручную?",
+            reply_markup=onboarding_name_kb(has_username),
+        )
+        await state.set_state(OnboardingStates.asking_name)
+        return
+    # Иначе сразу в меню
+    await message.answer(
+        "Готово. Чем займёмся?",
+        reply_markup=main_menu_kb(show_three_cards),
+    )
 
 
 @router.message(Command("help"))
@@ -266,11 +292,11 @@ async def cb_set_time(cb: CallbackQuery) -> None:
 
     scheduler = get_scheduler()
     bot = get_bot()
-    # Пользователь изменил время -> планируем пуш каждые 3 дня в новое время
-    scheduler.schedule_every_n_days(
+    # Пользователь изменил время -> планируем ежедневный пуш с учётом смещения
+    scheduler.schedule_daily_with_offset(
         user_id,
         time_str,
-        3,
+        getattr(user, "tz_offset_hours", 0) or 0,
         lambda user_id, _bot=bot: send_push_card(_bot, user_id),
     )
 
@@ -314,14 +340,15 @@ async def cb_push_on(cb: CallbackQuery) -> None:
         session.commit()
 
         push_time = user.push_time or DEFAULT_PUSH_TIME
+        tz_offset = getattr(user, "tz_offset_hours", 0) or 0
 
     scheduler = get_scheduler()
     bot = get_bot()
-    # Включаем пуши: планируем отправку каждые 3 дня
-    scheduler.schedule_every_n_days(
+    # Включаем пуши: ежедневно с учётом смещения
+    scheduler.schedule_daily_with_offset(
         user_id,
         push_time,
-        3,
+        tz_offset,
         lambda user_id, _bot=bot: send_push_card(_bot, user_id),
     )
 
@@ -552,3 +579,134 @@ async def handle_three_cards_question(message: Message, state: FSMContext) -> No
 
     await message.answer(response_text)
     await state.clear()
+
+
+# -------- Онбординг: имя, ДР, часовой пояс --------
+
+@router.callback_query(F.data == "use_profile_name")
+async def cb_use_profile_name(cb: CallbackQuery, state: FSMContext) -> None:
+    user = cb.from_user
+    name = user.username or getattr(user, "full_name", None) or user.first_name
+    with SessionLocal() as session:
+        db_user = session.query(User).filter(User.id == user.id).first()
+        if db_user:
+            db_user.display_name = name
+            session.commit()
+    await cb.message.answer("Записала. Теперь укажи дату рождения в формате ДД.ММ.ГГГГ")
+    await state.set_state(OnboardingStates.asking_birth_date)
+    await cb.answer()
+
+
+@router.callback_query(F.data == "enter_name_manual")
+async def cb_enter_name_manual(cb: CallbackQuery, state: FSMContext) -> None:
+    await cb.message.answer("Напиши, как к тебе обращаться (одно сообщение).")
+    await state.set_state(OnboardingStates.waiting_name_manual)
+    await cb.answer()
+
+
+@router.message(OnboardingStates.waiting_name_manual)
+async def msg_name_manual(message: Message, state: FSMContext) -> None:
+    name = (message.text or "").strip()
+    if not name:
+        await message.answer("Пожалуйста, отправь имя текстом.")
+        return
+    with SessionLocal() as session:
+        user = session.query(User).filter(User.id == message.from_user.id).first()
+        if user:
+            user.display_name = name
+            session.commit()
+    await message.answer("Отлично. Теперь укажи дату рождения в формате ДД.ММ.ГГГГ")
+    await state.set_state(OnboardingStates.asking_birth_date)
+
+
+def _parse_birth_date(text: str) -> date | None:
+    import re
+    from datetime import datetime as _dt
+    s = text.strip()
+    # Допускаем форматы: DD.MM.YYYY, DD-MM-YYYY, YYYY-MM-DD
+    for fmt in ("%d.%m.%Y", "%d-%m-%Y", "%Y-%m-%d"):
+        try:
+            return _dt.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    # Попытка вытащить цифры через regexp DD MM YYYY
+    m = re.match(r"^(\d{1,2})[\s./-](\d{1,2})[\s./-](\d{4})$", s)
+    if m:
+        d, mth, y = map(int, m.groups())
+        try:
+            return date(y, mth, d)
+        except ValueError:
+            return None
+    return None
+
+
+@router.message(OnboardingStates.asking_birth_date)
+async def msg_birth_date(message: Message, state: FSMContext) -> None:
+    d = _parse_birth_date(message.text or "")
+    if d is None:
+        await message.answer("Не похоже на дату. Пример: 07.11.1993")
+        return
+    with SessionLocal() as session:
+        user = session.query(User).filter(User.id == message.from_user.id).first()
+        if user:
+            user.birth_date = d
+            session.commit()
+    await message.answer(
+        "Отлично. Выбери часовой пояс относительно Москвы (МСК) — когда присылать уведомления:",
+        reply_markup=choose_tz_offset_kb(),
+    )
+    await state.set_state(OnboardingStates.asking_tz)
+
+
+@router.callback_query(F.data == "change_tz")
+async def cb_change_tz(cb: CallbackQuery) -> None:
+    await cb.message.edit_text(
+        "Выбери смещение относительно Москвы (МСК):",
+        reply_markup=choose_tz_offset_kb(),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("set_tz:"))
+async def cb_set_tz(cb: CallbackQuery, state: FSMContext) -> None:
+    try:
+        off = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer()
+        return
+    user_id = cb.from_user.id
+    with SessionLocal() as session:
+        user = session.query(User).filter(User.id == user_id).first()
+        if not user:
+            user = User(id=user_id)
+            session.add(user)
+        user.tz_offset_hours = off
+        if not user.push_time:
+            user.push_time = DEFAULT_PUSH_TIME
+        session.commit()
+        push_time = user.push_time
+
+    # Перепланируем уведомления с учётом смещения
+    scheduler = get_scheduler()
+    bot = get_bot()
+    scheduler.schedule_daily_with_offset(
+        user_id,
+        push_time,
+        off,
+        lambda user_id, _bot=bot: send_push_card(_bot, user_id),
+    )
+    await cb.message.edit_text("Часовой пояс обновлён. Настройки сохранены.")
+    # Показать главное меню
+    await cb.message.answer(
+        "Готово. Чем займёмся?",
+        reply_markup=main_menu_kb(_is_admin(user_id)),
+    )
+    await state.clear()
+    await cb.answer()
+
+
+@router.callback_query(F.data == "cancel_tz")
+async def cb_cancel_tz(cb: CallbackQuery, state: FSMContext) -> None:
+    await cb.message.edit_text("Настройки обновлены.")
+    await state.clear()
+    await cb.answer()

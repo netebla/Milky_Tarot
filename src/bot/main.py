@@ -35,17 +35,18 @@ async def reschedule_user_pushes(bot: Bot) -> None:
                 "id": user.id,
                 "push_time": user.push_time or DEFAULT_PUSH_TIME,
                 "push_enabled": bool(user.push_enabled),
+                "tz_offset_hours": getattr(user, "tz_offset_hours", 0) or 0,
             }
             for user in session.query(User).all()
         ]
 
     for user in users:
         if user["push_enabled"]:
-            # Раньше планировалось ежедневно; теперь отправляем каждые 3 дня
-            push_scheduler.schedule_every_n_days(
+            # Ежедневно с учётом смещения пользователя
+            push_scheduler.schedule_daily_with_offset(
                 user["id"],
                 user["push_time"],
-                3,
+                user["tz_offset_hours"],
                 lambda user_id, _bot=bot: send_push_card(_bot, user_id),
             )
         else:

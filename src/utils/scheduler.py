@@ -69,6 +69,35 @@ class PushScheduler:
         self.scheduler.add_job(wrapped, trigger, id=job_id, kwargs={"user_id": user_id}, replace_existing=True)
         logger.info("Запланирован ежедневный пуш для пользователя %s на %02d:%02d", user_id, hour, minute)
 
+    @staticmethod
+    def convert_user_time_to_moscow(time_str: str, tz_offset_hours: int) -> str:
+        """
+        Конвертировать локальное время пользователя (HH:MM) в московское время (HH:MM),
+        учитывая смещение пользователя относительно МСК в часах.
+
+        Пример: если пользователь в МСК+3 и хочет 10:00 локально, нужно запланировать в 07:00 МСК.
+        То есть msk_time = user_time - offset.
+        """
+        try:
+            user_hour, minute = map(int, time_str.split(":"))
+        except ValueError:
+            return time_str
+        msk_hour = (user_hour - (tz_offset_hours or 0)) % 24
+        return f"{msk_hour:02d}:{minute:02d}"
+
+    def schedule_daily_with_offset(
+        self,
+        user_id: int,
+        user_time_str: str,
+        tz_offset_hours: int,
+        callback: Callable[..., Any],
+    ) -> None:
+        """
+        Запланировать ежедневный пуш, переводя пользовательское время в московское по смещению.
+        """
+        msk_time = self.convert_user_time_to_moscow(user_time_str, tz_offset_hours)
+        self.schedule_daily(user_id, msk_time, callback)
+
     def schedule_every_n_days(self, user_id: int, time_str: str, n_days: int, callback: Callable[..., Any]) -> None:
         """
         Запланировать задачу с интервалом в n_days: каждый n-й день в заданное время HH:MM.
