@@ -31,6 +31,7 @@ from .keyboards import (
     settings_inline_kb,
     choose_tz_offset_kb,
     onboarding_name_kb,
+    choose_tz_mode_kb,
 )
 
 logger = logging.getLogger(__name__)
@@ -586,13 +587,20 @@ async def handle_three_cards_question(message: Message, state: FSMContext) -> No
 @router.callback_query(F.data == "use_profile_name")
 async def cb_use_profile_name(cb: CallbackQuery, state: FSMContext) -> None:
     user = cb.from_user
-    name = user.username or getattr(user, "full_name", None) or user.first_name
+    # Предпочтём реальное имя из профиля, затем username
+    full_name = (user.first_name or "").strip()
+    if getattr(user, "last_name", None):
+        ln = (user.last_name or "").strip()
+        if ln:
+            full_name = f"{full_name} {ln}" if full_name else ln
+    name = full_name or user.username or ""
     with SessionLocal() as session:
         db_user = session.query(User).filter(User.id == user.id).first()
         if db_user:
             db_user.display_name = name
             session.commit()
-    await cb.message.answer("Записала. Теперь укажи дату рождения в формате ДД.ММ.ГГГГ")
+    greet = f"Приятно познакомиться, {name}!" if name else "Приятно познакомиться!"
+    await cb.message.answer(f"{greet} Теперь укажи дату рождения в формате ДД.ММ.ГГГГ")
     await state.set_state(OnboardingStates.asking_birth_date)
     await cb.answer()
 
@@ -615,7 +623,7 @@ async def msg_name_manual(message: Message, state: FSMContext) -> None:
         if user:
             user.display_name = name
             session.commit()
-    await message.answer("Отлично. Теперь укажи дату рождения в формате ДД.ММ.ГГГГ")
+    await message.answer(f"Рада знакомству, {name}! Теперь укажи дату рождения в формате ДД.ММ.ГГГГ")
     await state.set_state(OnboardingStates.asking_birth_date)
 
 
@@ -652,14 +660,23 @@ async def msg_birth_date(message: Message, state: FSMContext) -> None:
             user.birth_date = d
             session.commit()
     await message.answer(
-        "Отлично. Выбери часовой пояс относительно Москвы (МСК) — когда присылать уведомления:",
-        reply_markup=choose_tz_offset_kb(),
+        "Отлично. Выбери часовой пояс: можно сразу выбрать Московское время (МСК) или другой:",
+        reply_markup=choose_tz_mode_kb(),
     )
     await state.set_state(OnboardingStates.asking_tz)
 
 
 @router.callback_query(F.data == "change_tz")
 async def cb_change_tz(cb: CallbackQuery) -> None:
+    await cb.message.edit_text(
+        "Выбери: Московское время (МСК) или другой часовой пояс",
+        reply_markup=choose_tz_mode_kb(),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "change_tz_other")
+async def cb_change_tz_other(cb: CallbackQuery) -> None:
     await cb.message.edit_text(
         "Выбери смещение относительно Москвы (МСК):",
         reply_markup=choose_tz_offset_kb(),
@@ -697,6 +714,39 @@ async def cb_set_tz(cb: CallbackQuery, state: FSMContext) -> None:
     )
     await cb.message.edit_text("Часовой пояс обновлён. Настройки сохранены.")
     # Показать главное меню
+    await cb.message.answer(
+        "Готово. Чем займёмся?",
+        reply_markup=main_menu_kb(_is_admin(user_id)),
+    )
+    await state.clear()
+    await cb.answer()
+
+
+@router.callback_query(F.data == "set_tz_moscow")
+async def cb_set_tz_moscow(cb: CallbackQuery, state: FSMContext) -> None:
+    user_id = cb.from_user.id
+    off = 0
+    with SessionLocal() as session:
+        user = session.query(User).filter(User.id == user_id).first()
+        if not user:
+            user = User(id=user_id)
+            session.add(user)
+        user.tz_offset_hours = off
+        if not user.push_time:
+            user.push_time = DEFAULT_PUSH_TIME
+        session.commit()
+        push_time = user.push_time
+
+    scheduler = get_scheduler()
+    bot = get_bot()
+    scheduler.schedule_daily_with_offset(
+        user_id,
+        push_time,
+        off,
+        lambda user_id, _bot=bot: send_push_card(_bot, user_id),
+    )
+
+    await cb.message.edit_text("Часовой пояс установлен: Московское время (МСК). Настройки сохранены.")
     await cb.message.answer(
         "Готово. Чем займёмся?",
         reply_markup=main_menu_kb(_is_admin(user_id)),

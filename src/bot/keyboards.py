@@ -80,3 +80,14 @@ def onboarding_name_kb(has_username: bool) -> InlineKeyboardMarkup:
         buttons.append([InlineKeyboardButton(text="Взять из профиля", callback_data="use_profile_name")])
     buttons.append([InlineKeyboardButton(text="Ввести вручную", callback_data="enter_name_manual")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def choose_tz_mode_kb() -> InlineKeyboardMarkup:
+    """Первая ступень выбора часового пояса: МСК сразу или выбрать другое."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Московское время (МСК)", callback_data="set_tz_moscow")],
+            [InlineKeyboardButton(text="Другой часовой пояс", callback_data="change_tz_other")],
+            [InlineKeyboardButton(text="Отмена", callback_data="cancel_tz")],
+        ]
+    )

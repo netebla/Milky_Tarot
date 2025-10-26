@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import random
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List
 from urllib.parse import quote
@@ -94,7 +94,16 @@ def choose_random_card(user: User, cards: List[Card], db: Session) -> Card:
     if user.last_card_date and user.last_card_date == now_moscow and user.last_card:
         return next((c for c in cards if c.title == user.last_card), cards[0])
 
-    new_card = random.choice(cards)
+    # Не повторять карту два дня подряд: исключаем вчерашнюю карту
+    candidates = cards
+    if user.last_card and user.last_card_date:
+        if user.last_card_date == (now_moscow - timedelta(days=1)):
+            filtered = [c for c in cards if c.title != user.last_card]
+            # На всякий случай, если фильтр дал пустой список — вернём весь набор
+            if filtered:
+                candidates = filtered
+
+    new_card = random.choice(candidates)
     user.last_card = new_card.title
     user.last_card_date = now_moscow
     user.draw_count = (user.draw_count or 0) + 1
