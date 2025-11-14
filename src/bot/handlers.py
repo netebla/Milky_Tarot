@@ -19,7 +19,13 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from utils.app_state import get_bot, get_scheduler
-from utils.cards_loader import GITHUB_RAW_BASE, IMAGES_DIR, choose_random_card, load_cards
+from utils.cards_loader import (
+    GITHUB_RAW_BASE,
+    IMAGES_DIR,
+    ALT_DESCRIPTIONS,
+    choose_random_card,
+    load_cards,
+)
 from utils.db import SessionLocal, User
 from utils.push import send_push_card
 from utils.scheduler import DEFAULT_PUSH_TIME
@@ -142,7 +148,14 @@ async def _send_card_of_the_day(message: Message, user_id: int) -> None:
 
 
 async def _send_card_message(message: Message, card) -> None:
-    caption = f"Карта дня: {card.title}\n\n{card.description}"
+    # Описание выбираем случайно: основное или альтернативное (если есть во втором CSV)
+    alt_desc = ALT_DESCRIPTIONS.get(card.title)
+    if alt_desc:
+        description = random.choice([card.description, alt_desc])
+    else:
+        description = card.description
+
+    caption = f"Карта дня: {card.title}\n\n{description}"
     local_path = getattr(card, "image_path", None)
     if callable(local_path):
         path = local_path()

@@ -18,6 +18,7 @@ from .db import User
 # Пути к данным и изображениям
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 CARDS_PATH = DATA_DIR / "cards.csv"
+CARDS_ALT_PATH = DATA_DIR / "cards_2.csv"
 IMAGES_DIR = DATA_DIR / "images"
 
 # Публичный fallback (на случай, если потребуется URL)
@@ -73,6 +74,25 @@ def load_cards() -> List[Card]:
 CARDS_ADVICE_PATH = DATA_DIR / "cards_advice.csv"
 
 
+def load_alt_descriptions() -> dict[str, str]:
+    """Загрузить альтернативные описания карт из cards_2.csv (если есть)."""
+    alt: dict[str, str] = {}
+    if not CARDS_ALT_PATH.exists():
+        return alt
+
+    with CARDS_ALT_PATH.open("r", encoding="utf-8") as f:
+        reader = csv.reader(f, delimiter=";")
+        for row in reader:
+            if len(row) < 2:
+                continue
+            title_raw, description = row[0], row[1]
+            title = _clean_title(title_raw)
+            description = description.strip()
+            if title and description:
+                alt[title] = description
+    return alt
+
+
 def load_advice_cards() -> List[Card]:
     if not CARDS_ADVICE_PATH.exists():
         raise FileNotFoundError(f"Не найден CSV с советами: {CARDS_ADVICE_PATH}")
@@ -119,7 +139,11 @@ __all__ = [
     "Card",
     "load_cards",
     "load_advice_cards",
+    "load_alt_descriptions",
     "choose_random_card",
     "MOSCOW_TZ",
     "IMAGES_DIR",
 ]
+
+# Глобальный словарь альтернативных описаний для быстрого доступа
+ALT_DESCRIPTIONS = load_alt_descriptions()
