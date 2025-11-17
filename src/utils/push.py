@@ -7,6 +7,7 @@ from pathlib import Path
 from aiogram import Bot
 from sqlalchemy.orm import Session
 
+from bot.keyboards import push_card_kb
 from .db import SessionLocal, User
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,11 @@ async def send_push_card(bot: Bot, user_id: int) -> None:
 
         text = random.choice(PUSH_TEXTS) if PUSH_TEXTS else DEFAULT_PUSH_TEXT
         try:
-            await bot.send_message(chat_id=user_id, text=text)
+            await bot.send_message(
+                chat_id=user_id,
+                text=text,
+                reply_markup=push_card_kb(),
+            )
         except Exception as e:
             logger.warning("Не удалось отправить пуш %s: %s", user_id, e)
     finally:

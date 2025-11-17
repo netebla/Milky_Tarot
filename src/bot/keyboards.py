@@ -56,6 +56,15 @@ def advice_draw_kb() -> InlineKeyboardMarkup:
     )
 
 
+def push_card_kb() -> InlineKeyboardMarkup:
+    """Кнопка под пушем для вытягивания карты дня."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Вытянуть карту дня", callback_data="push_draw_card")],
+        ]
+    )
+
+
 def choose_tz_offset_kb() -> InlineKeyboardMarkup:
     """Клавиатура выбора смещения относительно МСК (-12..+14)."""
     rows = []

@@ -773,3 +773,12 @@ async def cb_cancel_tz(cb: CallbackQuery, state: FSMContext) -> None:
     await cb.message.edit_text("Настройки обновлены.")
     await state.clear()
     await cb.answer()
+
+
+# -------- Пуш: кнопка "Вытянуть карту дня" --------
+
+@router.callback_query(F.data == "push_draw_card")
+async def cb_push_draw_card(cb: CallbackQuery) -> None:
+    """Обработчик кнопки под пушем — вытянуть карту дня."""
+    await _send_card_of_the_day(cb.message, cb.from_user.id)
+    await cb.answer()
