@@ -4,11 +4,12 @@ import csv
 import logging
 import os
 import random
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import quote
 
 import httpx
+import pytz
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 from aiogram.filters import Command
@@ -207,9 +208,9 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 
     welcome_path = Path("/app/src/data/images/welcome.jpg")
     welcome_text = (
-        "👋 Привет! Я — Милки, твой спутник в мире карт.\n\n"
-        "Помогу с ‘Картой дня’, советом и глубокими раскладами.\n"
-        "Давай подстроим бота под тебя: как к тебе обращаться, дата рождения и удобный часовой пояс."
+        "Привет! Я Милки, твой спутник в мире карт🪐\n\n"
+        "Я помогу тебе настроиться на день, а также дам ответы на самые волнующие вопросы ☀️\n\n"
+        "Но для начала, давай познакомимся?"
     )
 
     if welcome_path.exists():
@@ -228,7 +229,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     if not display_name or birth_date is None:
         has_username = bool(message.from_user and (message.from_user.username or message.from_user.full_name))
         await message.answer(
-            "Сначала имя: выбрать из профиля или ввести вручную?",
+            "Твое имя?",
             reply_markup=onboarding_name_kb(has_username),
         )
         await state.set_state(OnboardingStates.asking_name)
@@ -673,19 +674,101 @@ async def msg_birth_date(message: Message, state: FSMContext) -> None:
             user.birth_date = d
             session.commit()
     await message.answer(
-        "Отлично. Выбери часовой пояс: можно сразу выбрать Московское время (МСК) или другой:",
-        reply_markup=choose_tz_mode_kb(),
+        "Теперь настроим твой часовой пояс :)\n\n"
+        "Укажи, какой у тебя сейчас час\n\n"
+        "(Если на часах 14:40, то указывай 14)",
     )
     await state.set_state(OnboardingStates.asking_tz)
 
 
 @router.callback_query(F.data == "change_tz")
-async def cb_change_tz(cb: CallbackQuery) -> None:
+async def cb_change_tz(cb: CallbackQuery, state: FSMContext) -> None:
     await cb.message.edit_text(
-        "Выбери: Московское время (МСК) или другой часовой пояс",
-        reply_markup=choose_tz_mode_kb(),
+        "Теперь настроим твой часовой пояс :)\n\n"
+        "Укажи, какой у тебя сейчас час\n\n"
+        "(Если на часах 14:40, то указывай 14)",
     )
+    await state.set_state(OnboardingStates.asking_tz)
     await cb.answer()
+
+
+@router.message(OnboardingStates.asking_tz)
+async def msg_tz_hour(message: Message, state: FSMContext) -> None:
+    text = (message.text or "").strip()
+    if not text:
+        await message.answer(
+            "Пока ничего не вижу 🙈\n\n"
+            "Напиши, какой сейчас час у тебя — просто число от 0 до 23.\n\n"
+            "Например, если на часах 14:40, достаточно отправить 14."
+        )
+        return
+
+    # Пытаемся вытащить число часа (0-23) даже если пользователь ввёл что-то вроде "14:40"
+    import re
+
+    m = re.search(r"\d{1,2}", text)
+    if not m:
+        await message.answer(
+            "Кажется, я не нашла в сообщении число часа 🕰️\n\n"
+            "Отправь, пожалуйста, только час в формате числа от 0 до 23.\n\n"
+            "Пример: 8 или 14."
+        )
+        return
+
+    try:
+        hour = int(m.group(0))
+    except ValueError:
+        await message.answer(
+            "Что-то пошло не так с числом часа ✨\n\n"
+            "Попробуй ещё раз: отправь только одно число от 0 до 23.\n"
+            "Например: 9 или 21."
+        )
+        return
+
+    if not 0 <= hour <= 23:
+        await message.answer(
+            "Хм, такого часа на циферблате не бывает 🙂\n\n"
+            "Час должен быть в диапазоне от 0 до 23.\n"
+            "Например: 0, 7, 14 или 22."
+        )
+        return
+
+    # Текущее время в Москве
+    msk_tz = pytz.timezone("Europe/Moscow")
+    msk_hour = datetime.now(msk_tz).hour
+
+    # Смещение пользователя относительно МСК в часах
+    diff = hour - msk_hour
+    tz_offset_hours = ((diff + 12) % 24) - 12  # нормализуем в диапазон [-12, 11]
+
+    user_id = message.from_user.id
+    with SessionLocal() as session:
+        user = session.query(User).filter(User.id == user_id).first()
+        if not user:
+            user = User(id=user_id)
+            session.add(user)
+        user.tz_offset_hours = tz_offset_hours
+        if not user.push_time:
+            user.push_time = DEFAULT_PUSH_TIME
+        session.commit()
+        push_time = user.push_time
+
+    # Перепланируем уведомления с учётом нового смещения
+    scheduler = get_scheduler()
+    bot = get_bot()
+    scheduler.schedule_daily_with_offset(
+        user_id,
+        push_time,
+        tz_offset_hours,
+        lambda user_id, _bot=bot: send_push_card(_bot, user_id),
+    )
+
+    await message.answer("Часовой пояс настроен. Настройки сохранены.")
+    await message.answer(
+        "Готово. Чем займёмся?",
+        reply_markup=main_menu_kb(_is_admin(user_id)),
+    )
+    await state.clear()
 
 
 @router.callback_query(F.data == "change_tz_other")
