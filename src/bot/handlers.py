@@ -302,25 +302,30 @@ async def cb_set_time(cb: CallbackQuery) -> None:
     except TelegramBadRequest:
         logger.exception("Не удалось ответить на callback при выборе времени пуша")
 
-    with SessionLocal() as session:
-        user = session.query(User).filter(User.id == user_id).first()
-        if not user:
-            user = User(id=user_id)
-            session.add(user)
-        user.push_time = time_str
-        user.push_enabled = True
-        session.commit()
+    # Обновляем настройки в БД и перепланируем пуши
+    try:
+        with SessionLocal() as session:
+            user = session.query(User).filter(User.id == user_id).first()
+            if not user:
+                user = User(id=user_id)
+                session.add(user)
+            user.push_time = time_str
+            user.push_enabled = True
+            session.commit()
 
-    scheduler = get_scheduler()
-    bot = get_bot()
-    # Пользователь изменил время -> планируем ежедневный пуш с учётом смещения
-    scheduler.schedule_daily_with_offset(
-        user_id,
-        time_str,
-        getattr(user, "tz_offset_hours", 0) or 0,
-        lambda user_id, _bot=bot: send_push_card(_bot, user_id),
-    )
+        scheduler = get_scheduler()
+        bot = get_bot()
+        # Пользователь изменил время -> планируем ежедневный пуш с учётом смещения
+        scheduler.schedule_daily_with_offset(
+            user_id,
+            time_str,
+            getattr(user, "tz_offset_hours", 0) or 0,
+            lambda user_id, _bot=bot: send_push_card(_bot, user_id),
+        )
+    except Exception:
+        logger.exception("Ошибка при обновлении времени пуша для пользователя %s", user_id)
 
+    # Сообщаем пользователю, что время обновлено
     try:
         await cb.message.edit_text(f"Время пуша обновлено на {time_str}.")
     except TelegramBadRequest:
@@ -329,15 +334,26 @@ async def cb_set_time(cb: CallbackQuery) -> None:
         try:
             await cb.message.answer(f"Время пуша обновлено на {time_str}.")
         except TelegramBadRequest:
-            # Если и это не удалось — просто проигнорируем,
-            # чтобы не ломать обработчик коллбэка.
             logger.exception("Не удалось отправить подтверждение об обновлении времени пуша")
 
-    # После успешного обновления времени возвращаем пользователя в главное меню
-    await cb.message.answer(
-        "Готово. Чем займёмся?",
-        reply_markup=main_menu_kb(_is_admin(user_id)),
-    )
+    # После обновления времени возвращаем пользователя в главное меню
+    try:
+        await cb.message.answer(
+            "Готово. Чем займёмся?",
+            reply_markup=main_menu_kb(_is_admin(user_id)),
+        )
+    except TelegramBadRequest:
+        # Если по какой-то причине ответить в это сообщение нельзя —
+        # пробуем отправить меню напрямую пользователю
+        try:
+            bot = get_bot()
+            await bot.send_message(
+                chat_id=user_id,
+                text="Готово. Чем займёмся?",
+                reply_markup=main_menu_kb(_is_admin(user_id)),
+            )
+        except Exception:
+            logger.exception("Не удалось отправить главное меню после изменения времени пуша")
 
 
 @router.callback_query(F.data == "cancel_time")
