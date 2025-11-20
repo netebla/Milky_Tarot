@@ -333,6 +333,12 @@ async def cb_set_time(cb: CallbackQuery) -> None:
             # чтобы не ломать обработчик коллбэка.
             logger.exception("Не удалось отправить подтверждение об обновлении времени пуша")
 
+    # После успешного обновления времени возвращаем пользователя в главное меню
+    await cb.message.answer(
+        "Готово. Чем займёмся?",
+        reply_markup=main_menu_kb(_is_admin(user_id)),
+    )
+
 
 @router.callback_query(F.data == "cancel_time")
 async def cb_cancel_time(cb: CallbackQuery) -> None:
