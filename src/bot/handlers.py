@@ -7,6 +7,7 @@ import random
 from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import quote
+import contextlib
 
 import httpx
 import pytz
@@ -296,27 +297,41 @@ async def cb_set_time(cb: CallbackQuery) -> None:
     time_str = cb.data.split(":", 1)[1]
     user_id = cb.from_user.id
 
-    with SessionLocal() as session:
-        user = session.query(User).filter(User.id == user_id).first()
-        if not user:
-            user = User(id=user_id)
-            session.add(user)
-        user.push_time = time_str
-        user.push_enabled = True
-        session.commit()
+    try:
+        with SessionLocal() as session:
+            user = session.query(User).filter(User.id == user_id).first()
+            if not user:
+                user = User(id=user_id)
+                session.add(user)
+            user.push_time = time_str
+            user.push_enabled = True
+            session.commit()
 
-    scheduler = get_scheduler()
-    bot = get_bot()
-    # Пользователь изменил время -> планируем ежедневный пуш с учётом смещения
-    scheduler.schedule_daily_with_offset(
-        user_id,
-        time_str,
-        getattr(user, "tz_offset_hours", 0) or 0,
-        lambda user_id, _bot=bot: send_push_card(_bot, user_id),
-    )
+        scheduler = get_scheduler()
+        bot = get_bot()
+        # Пользователь изменил время -> планируем ежедневный пуш с учётом смещения
+        scheduler.schedule_daily_with_offset(
+            user_id,
+            time_str,
+            getattr(user, "tz_offset_hours", 0) or 0,
+            lambda user_id, _bot=bot: send_push_card(_bot, user_id),
+        )
 
-    await cb.message.edit_text(f"Время пуша обновлено на {time_str}.")
-    await cb.answer()
+        try:
+            await cb.message.edit_text(f"Время пуша обновлено на {time_str}.")
+        except TelegramBadRequest:
+            # Если не удалось отредактировать сообщение (удалено/устарело),
+            # просто отправим новое с подтверждением.
+            await cb.message.answer(f"Время пуша обновлено на {time_str}.")
+    except Exception:
+        logger.exception("Не удалось обновить время пуша для пользователя %s", user_id)
+        with contextlib.suppress(TelegramBadRequest):
+            await cb.message.answer(
+                "Не получилось обновить время пуша. Попробуй, пожалуйста, ещё раз чуть позже."
+            )
+    finally:
+        with contextlib.suppress(TelegramBadRequest):
+            await cb.answer()
 
 
 @router.callback_query(F.data == "cancel_time")
