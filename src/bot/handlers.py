@@ -296,6 +296,12 @@ async def cb_set_time(cb: CallbackQuery) -> None:
     time_str = cb.data.split(":", 1)[1]
     user_id = cb.from_user.id
 
+    # Сразу отвечаем на callback, чтобы убрать "крутилку" у пользователя
+    try:
+        await cb.answer("Время пуша обновляю ✨")
+    except TelegramBadRequest:
+        logger.exception("Не удалось ответить на callback при выборе времени пуша")
+
     with SessionLocal() as session:
         user = session.query(User).filter(User.id == user_id).first()
         if not user:
@@ -326,13 +332,6 @@ async def cb_set_time(cb: CallbackQuery) -> None:
             # Если и это не удалось — просто проигнорируем,
             # чтобы не ломать обработчик коллбэка.
             logger.exception("Не удалось отправить подтверждение об обновлении времени пуша")
-
-    try:
-        await cb.answer()
-    except TelegramBadRequest:
-        # Если Telegram не принимает ответ на коллбэк (например, устаревший),
-        # просто логируем и продолжаем.
-        logger.exception("Не удалось ответить на callback при обновлении времени пуша")
 
 
 @router.callback_query(F.data == "cancel_time")
