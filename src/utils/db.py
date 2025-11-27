@@ -33,6 +33,8 @@ class User(Base):
     subscription_plan = Column(String, nullable=True)
     subscription_started_at = Column(DateTime, nullable=True)
     subscription_expires_at = Column(DateTime, nullable=True)
+    # Баланс внутренней валюты ("рыбки") для платных раскладов
+    fish_balance = Column(Integer, default=0)
 
 def init_db():
     Base.metadata.create_all(bind=engine)

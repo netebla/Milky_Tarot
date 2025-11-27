@@ -39,6 +39,9 @@ from .keyboards import (
     choose_tz_offset_kb,
     onboarding_name_kb,
     choose_tz_mode_kb,
+    fish_balance_kb,
+    fish_tariff_kb,
+    fish_payment_method_kb,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,6 +70,12 @@ class OnboardingStates(StatesGroup):
     waiting_name_manual = State()
     asking_birth_date = State()
     asking_tz = State()
+
+
+class FishPaymentStates(StatesGroup):
+    viewing_balance = State()
+    choosing_tariff = State()
+    choosing_payment_method = State()
 
 
 def _is_admin(user_id: int) -> bool:
@@ -258,6 +267,30 @@ async def btn_help(message: Message) -> None:
     await cmd_help(message)
 
 
+@router.message(F.text == "Мои рыбки")
+async def btn_my_fish(message: Message, state: FSMContext) -> None:
+    user = message.from_user
+    if not user or not _is_admin(user.id):
+        await message.answer("Эта функция пока доступна только администраторам.")
+        return
+
+    with SessionLocal() as session:
+        db_user = session.query(User).filter(User.id == user.id).first()
+        if not db_user:
+            db_user = User(id=user.id)
+            session.add(db_user)
+            session.commit()
+        balance = getattr(db_user, "fish_balance", 0) or 0
+
+    await state.set_state(FishPaymentStates.viewing_balance)
+    await message.answer(
+        f"На твоем балансе сейчас {balance} 🐟\n\n"
+        "Рыбки — это внутренняя валюта за расклады.\n"
+        "Можешь пополнить баланс или вернуться в главное меню.",
+        reply_markup=fish_balance_kb(),
+    )
+
+
 @router.message(F.text == "Мои настройки")
 async def btn_settings(message: Message) -> None:
     with SessionLocal() as session:
@@ -289,6 +322,39 @@ async def btn_three_cards(message: Message, state: FSMContext) -> None:
 async def cb_change_time(cb: CallbackQuery) -> None:
     await cb.message.edit_text("Выберите время отправки уведомления:", reply_markup=choose_time_kb())
     await cb.answer()
+
+
+@router.message(F.text == "Пополнить баланс 🐟")
+async def msg_fish_topup(message: Message, state: FSMContext) -> None:
+    user = message.from_user
+    if not user or not _is_admin(user.id):
+        await message.answer("Эта функция пока доступна только администраторам.")
+        return
+
+    data = await state.get_data()
+    # Просто помечаем, что заходим в выбор тарифа
+    await state.update_data(last_step="balance")
+    await state.set_state(FishPaymentStates.choosing_tariff)
+
+    # При желании сюда можно добавить картинку с тарифами
+    await message.answer(
+        "Выберите, сколько рыбок хотите приобрести:\n"
+        "50₽ – 350 🐟\n"
+        "150₽ – 1050 🐟\n"
+        "300₽ – 2100 🐟\n"
+        "650₽ – 4550 🐟",
+        reply_markup=fish_tariff_kb(),
+    )
+
+
+@router.message(F.text == "Главное меню")
+async def msg_main_menu_from_anywhere(message: Message, state: FSMContext) -> None:
+    """Позволяет вернуться в главное меню с любой сцены FSM."""
+    await state.clear()
+    await message.answer(
+        "Готово. Чем займёмся?",
+        reply_markup=main_menu_kb(_is_admin(message.from_user.id)),
+    )
 
 
 @router.callback_query(F.data.startswith("set_time:"))
@@ -354,6 +420,158 @@ async def cb_set_time(cb: CallbackQuery) -> None:
             )
         except Exception:
             logger.exception("Не удалось отправить главное меню после изменения времени пуша")
+
+
+@router.callback_query(F.data.startswith("fish_tariff:"))
+async def cb_fish_select_tariff(cb: CallbackQuery, state: FSMContext) -> None:
+    user = cb.from_user
+    if not user or not _is_admin(user.id):
+        await cb.answer()
+        return
+
+    try:
+        amount_str = cb.data.split(":", 1)[1]
+        amount = int(amount_str)
+    except (IndexError, ValueError):
+        await cb.answer()
+        return
+
+    # Сохраняем выбранный тариф в состоянии
+    await state.update_data(selected_tariff=amount)
+    await state.set_state(FishPaymentStates.choosing_payment_method)
+
+    await cb.message.edit_text(
+        "Отличный выбор! Теперь выбери удобный способ оплаты:",
+        reply_markup=fish_payment_method_kb(),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "fish_back_to_balance")
+async def cb_fish_back_to_balance(cb: CallbackQuery, state: FSMContext) -> None:
+    user = cb.from_user
+    if not user or not _is_admin(user.id):
+        await cb.answer()
+        return
+
+    with SessionLocal() as session:
+        db_user = session.query(User).filter(User.id == user.id).first()
+        balance = getattr(db_user, "fish_balance", 0) if db_user else 0
+
+    await state.set_state(FishPaymentStates.viewing_balance)
+    await cb.message.edit_text(
+        f"На твоем балансе сейчас {balance} 🐟\n\n"
+        "Можешь пополнить баланс или вернуться в главное меню.",
+    )
+    await cb.message.answer(
+        "Что дальше?",
+        reply_markup=fish_balance_kb(),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "fish_back_to_tariffs")
+async def cb_fish_back_to_tariffs(cb: CallbackQuery, state: FSMContext) -> None:
+    user = cb.from_user
+    if not user or not _is_admin(user.id):
+        await cb.answer()
+        return
+
+    await state.set_state(FishPaymentStates.choosing_tariff)
+    await cb.message.edit_text(
+        "Выберите, сколько рыбок хотите приобрести:\n"
+        "50₽ – 350 🐟\n"
+        "150₽ – 1050 🐟\n"
+        "300₽ – 2100 🐟\n"
+        "650₽ – 4550 🐟",
+        reply_markup=fish_tariff_kb(),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "fish_main_menu")
+async def cb_fish_main_menu(cb: CallbackQuery, state: FSMContext) -> None:
+    user = cb.from_user
+    if not user:
+        await cb.answer()
+        return
+
+    await state.clear()
+    try:
+        await cb.message.edit_text("Возвращаю в главное меню.")
+    except TelegramBadRequest:
+        pass
+
+    bot = get_bot()
+    await bot.send_message(
+        chat_id=user.id,
+        text="Готово. Чем займёмся?",
+        reply_markup=main_menu_kb(_is_admin(user.id)),
+    )
+    await cb.answer()
+
+
+def _fish_tariff_to_amounts(amount: int) -> tuple[int, int]:
+    """Вернуть (total_fish, bonus_fish) по сумме в рублях."""
+    if amount == 50:
+        return 350, 0
+    if amount == 150:
+        return 1050, 150
+    if amount == 300:
+        return 2100, 400
+    if amount == 650:
+        return 4550, 1000
+    return 0, 0
+
+
+@router.callback_query(F.data.startswith("fish_pay:"))
+async def cb_fish_pay(cb: CallbackQuery, state: FSMContext) -> None:
+    user = cb.from_user
+    if not user or not _is_admin(user.id):
+        await cb.answer()
+        return
+
+    data = await state.get_data()
+    amount = int(data.get("selected_tariff", 0) or 0)
+    total_fish, bonus_fish = _fish_tariff_to_amounts(amount)
+    if total_fish == 0:
+        await cb.answer("Не удалось определить тариф, попробуй ещё раз.")
+        return
+
+    # Начисляем рыбки
+    with SessionLocal() as session:
+        db_user = session.query(User).filter(User.id == user.id).first()
+        if not db_user:
+            db_user = User(id=user.id)
+            session.add(db_user)
+        current_balance = getattr(db_user, "fish_balance", 0) or 0
+        db_user.fish_balance = current_balance + total_fish
+        session.commit()
+        new_balance = db_user.fish_balance
+
+    method = cb.data.split(":", 1)[1]
+    method_human = {
+        "sbp": "СБП",
+        "card": "картой",
+        "stars": "звёздами Telegram",
+    }.get(method, "выбранным способом")
+
+    await state.clear()
+
+    text_lines = [
+        f"Оплата {method_human} прошла успешно ✨",
+        f"Тебе начислено {total_fish} 🐟.",
+    ]
+    if bonus_fish > 0:
+        text_lines.append(f"Из них {bonus_fish} рыбок — бонусные 🎁")
+    text_lines.append(f"Твой новый баланс: {new_balance} 🐟")
+
+    await cb.message.edit_text("\n".join(text_lines))
+    await cb.message.answer(
+        "Готово. Чем займёмся?",
+        reply_markup=main_menu_kb(_is_admin(user.id)),
+    )
+    await cb.answer()
 
 
 @router.callback_query(F.data == "cancel_time")

@@ -1,14 +1,15 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 
-def main_menu_kb(show_three_cards: bool = False) -> ReplyKeyboardMarkup:
+def main_menu_kb(show_admin_features: bool = False) -> ReplyKeyboardMarkup:
     keyboard = [
         [KeyboardButton(text="Вытянуть карту дня")],
         [KeyboardButton(text="Узнать совет карт")],
     ]
 
-    if show_three_cards:
+    if show_admin_features:
         keyboard.append([KeyboardButton(text='"Три карты"')])
+        keyboard.append([KeyboardButton(text="Мои рыбки")])
 
     keyboard.append([KeyboardButton(text="Мои настройки"), KeyboardButton(text="Помощь")])
 
@@ -28,6 +29,61 @@ def settings_inline_kb(push_enabled: bool) -> InlineKeyboardMarkup:
                 callback_data=("push_off" if push_enabled else "push_on"),
             )],
             [InlineKeyboardButton(text="Помощь", callback_data="help")],
+        ]
+    )
+
+
+def fish_balance_kb() -> ReplyKeyboardMarkup:
+    """Клавиатура под экраном баланса рыбок."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Пополнить баланс 🐟")],
+            [KeyboardButton(text="Главное меню")],
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Выберите действие",
+    )
+
+
+def fish_tariff_kb() -> InlineKeyboardMarkup:
+    """Инлайн-клавиатура с вариантами тарифов."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="50₽ – 350 🐟", callback_data="fish_tariff:50"),
+            ],
+            [
+                InlineKeyboardButton(text="150₽ – 1050 🐟", callback_data="fish_tariff:150"),
+            ],
+            [
+                InlineKeyboardButton(text="300₽ – 2100 🐟", callback_data="fish_tariff:300"),
+            ],
+            [
+                InlineKeyboardButton(text="650₽ – 4550 🐟", callback_data="fish_tariff:650"),
+            ],
+            [
+                InlineKeyboardButton(text="Назад", callback_data="fish_back_to_balance"),
+                InlineKeyboardButton(text="Главное меню", callback_data="fish_main_menu"),
+            ],
+        ]
+    )
+
+
+def fish_payment_method_kb() -> InlineKeyboardMarkup:
+    """Инлайн-клавиатура выбора способа оплаты."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="СБП", callback_data="fish_pay:sbp"),
+                InlineKeyboardButton(text="Картой", callback_data="fish_pay:card"),
+            ],
+            [
+                InlineKeyboardButton(text="Звёздами Telegram", callback_data="fish_pay:stars"),
+            ],
+            [
+                InlineKeyboardButton(text="Назад", callback_data="fish_back_to_tariffs"),
+                InlineKeyboardButton(text="Главное меню", callback_data="fish_main_menu"),
+            ],
         ]
     )
 
