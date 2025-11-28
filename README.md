@@ -90,3 +90,28 @@ docker exec -it tarot_db psql -U ${POSTGRES_USER:-tarot} -d ${POSTGRES_DB:-tarot
 ```bash
 docker compose restart bot
 ```
+
+RAG-контекст для раскладов с LLM
+-------------------------------
+
+Для раскладов, где трактовка строится через LLM, используется общий модуль псевдо-RAG `src/llm/rag.py`:
+
+- Общий стиль и тон трактовки задаются текстом из `src/data/rag_common_text.txt`.
+- Дополнительные значения карт берутся из `src/data/rag_cards.csv` (формат: `Название;Текст`), но только для тех карт, которые реально выпали в раскладе.
+- Функция `build_rag_prompt(base_prompt, cards)`:
+  - собирает общий контекст и трактовки выпавших карт;
+  - добавляет их "поверх" базового промпта как скрытый контекст (LLM не должен ссылаться на него напрямую).
+
+Пример использования (расклад "Три карты"):
+
+- Базовый промпт собирается в `src/llm/three_cards.py` функцией `_build_base_prompt`.
+- Перед вызовом LLM он оборачивается:
+
+```python
+from llm.rag import build_rag_prompt
+
+base_prompt = _build_base_prompt(cards, question)
+prompt = build_rag_prompt(base_prompt, cards)
+```
+
+Точно таким же образом можно подключить RAG-контекст к любым будущим раскладам, в которых используется LLM.
