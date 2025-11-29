@@ -1,9 +1,8 @@
 """Общий вспомогательный модуль для "псевдо-RAG" контекста.
 
 Задача: на вход получать список карт расклада и готовый базовый промпт,
-а на выходе возвращать промпт, дополненный:
-- общим текстом-инструкцией (rag_common_text.txt);
-- трактовками только тех карт, которые реально выпали (rag_cards.csv).
+а на выходе возвращать промпт, дополненный трактовками только тех карт,
+которые реально выпали (rag_cards.csv).
 
 LLM не должен упоминать, что этот контекст был передан отдельно.
 """
@@ -22,23 +21,10 @@ logger = logging.getLogger(__name__)
 # Путь к данным
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 RAG_CARDS_PATH = DATA_DIR / "rag_cards.csv"
-RAG_COMMON_TEXT_PATH = DATA_DIR / "rag_common_text.txt"
 
 
 def _clean_title(raw: str) -> str:
     return raw.replace("\ufeff", "").strip()
-
-
-def _load_rag_common_text() -> str:
-    try:
-        text = RAG_COMMON_TEXT_PATH.read_text(encoding="utf-8")
-        return text.strip()
-    except FileNotFoundError:
-        logger.warning("RAG common text file not found: %s", RAG_COMMON_TEXT_PATH)
-        return ""
-    except OSError as exc:
-        logger.warning("Failed to read RAG common text from %s: %s", RAG_COMMON_TEXT_PATH, exc)
-        return ""
 
 
 def _load_rag_card_meanings() -> dict[str, str]:
@@ -64,7 +50,6 @@ def _load_rag_card_meanings() -> dict[str, str]:
     return meanings
 
 
-RAG_COMMON_TEXT = _load_rag_common_text()
 RAG_CARD_MEANINGS = _load_rag_card_meanings()
 
 
@@ -75,12 +60,6 @@ def build_rag_prompt(base_prompt: str, cards: Sequence[Card]) -> str:
     - cards: объекты Card, которые реально участвуют в раскладе.
     """
     pieces: list[str] = []
-
-    if RAG_COMMON_TEXT:
-        pieces.append(
-            "Общие указания по стилю и тону трактовки (важный внутренний контекст):\n"
-            f"{RAG_COMMON_TEXT}"
-        )
 
     card_snippets: list[str] = []
     for card in cards:
@@ -96,12 +75,11 @@ def build_rag_prompt(base_prompt: str, cards: Sequence[Card]) -> str:
         )
 
     if not pieces:
-        # Нет ни общего текста, ни трактовок — просто возвращаем исходный промпт.
+        # Нет трактовок — просто возвращаем исходный промпт.
         return base_prompt
 
     rag_context = (
-        "Ниже приведён дополнительный контекст, который нужно учитывать при анализе расклада, "
-        "как если бы это были заранее подобранные материалы (аналог RAG). "
+        "Ниже приведены дополнительные трактовки карт, которые выпали в раскладе. "
         "Не ссылайся на этот контекст напрямую и не упоминай, что он был отдельно передан — "
         "просто используй его смысл внутри живой, человечной трактовки.\n\n"
         + "\n\n".join(pieces)
@@ -111,4 +89,3 @@ def build_rag_prompt(base_prompt: str, cards: Sequence[Card]) -> str:
 
 
 __all__ = ["build_rag_prompt"]
-
