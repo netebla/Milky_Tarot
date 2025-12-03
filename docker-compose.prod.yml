@@ -30,6 +30,7 @@ services:
   payment_bot:
     image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/milky-tarot:latest
     container_name: tarot_payment_bot
+    command: ["python", "-m", "bot.payment_main"]
     environment:
       PAYMENT_BOT_TOKEN: ${PAYMENT_BOT_TOKEN}
       ADMIN_ID: ${ADMIN_ID}

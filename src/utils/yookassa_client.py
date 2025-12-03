@@ -24,6 +24,8 @@ YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
 # Куда вернётся пользователь после оплаты
 YOOKASSA_RETURN_URL = os.getenv("YOOKASSA_RETURN_URL", "https://t.me/Milky_Tarot_Bot")
+YOOKASSA_RECEIPT_PHONE = os.getenv("YOOKASSA_RECEIPT_PHONE", "79000000000")
+YOOKASSA_TAX_SYSTEM_CODE = os.getenv("YOOKASSA_TAX_SYSTEM_CODE")
 
 
 class YooKassaError(Exception):
@@ -68,7 +70,28 @@ async def create_payment(
             "return_url": YOOKASSA_RETURN_URL,
         },
         "description": description[:128],
+        # Для прод-ключа ЮKassa может требовать обязательный чек.
+        # Добавляем минимальный чек с одним товаром.
+        "receipt": {
+            "customer": {
+                "phone": YOOKASSA_RECEIPT_PHONE,
+            },
+            "items": [
+                {
+                    "description": description[:128],
+                    "quantity": "1.00",
+                    "amount": {
+                        "value": f"{amount_rub:.2f}",
+                        "currency": "RUB",
+                    },
+                    # Базовый код НДС, при необходимости можно переопределить через настройки магазина
+                    "vat_code": 1,
+                }
+            ],
+        },
     }
+    if YOOKASSA_TAX_SYSTEM_CODE:
+        payload["receipt"]["tax_system_code"] = int(YOOKASSA_TAX_SYSTEM_CODE)
     if metadata:
         payload["metadata"] = metadata
 
@@ -135,4 +158,3 @@ async def get_payment(payment_id: str) -> Dict[str, Any]:
         )
 
     return response.json()
-
