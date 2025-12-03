@@ -42,7 +42,7 @@ async def reschedule_user_pushes(bot: Bot) -> None:
 
     for user in users:
         if user["push_enabled"]:
-            # Ежедневно с учётом смещения пользователя
+            # Ежедневно с учётом смещения пользователя.
             push_scheduler.schedule_daily_with_offset(
                 user["id"],
                 user["push_time"],
