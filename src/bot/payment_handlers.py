@@ -13,11 +13,12 @@ from __future__ import annotations
    - если canceled — пишем, что платёж не прошёл.
 """
 
+import asyncio
 import logging
 import os
 from datetime import datetime
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message
 from sqlalchemy.orm import Session
@@ -84,6 +85,104 @@ def _payment_actions_kb(payment_db_id: int, include_back_to_main: bool = True) -
             ]
         )
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+async def _auto_check_payment(bot: Bot, payment_db_id: int, user_id: int) -> None:
+    """
+    Фоновая проверка статуса платежа в ЮKassa.
+
+    Периодически опрашивает ЮKassa и:
+    - при успешной оплате начисляет рыбки и отправляет сообщение пользователю;
+    - при отмене сообщает пользователю;
+    - если по таймауту платёж всё ещё pending, предлагает проверить вручную.
+    """
+    max_attempts = 18  # ~3 минуты при шаге 10 секунд
+    delay_seconds = 10
+
+    for _ in range(max_attempts):
+        with SessionLocal() as session:
+            payment: Payment | None = session.query(Payment).filter(Payment.id == payment_db_id).first()
+            if not payment:
+                return
+
+            # Если платёж уже обработан вручную
+            if payment.status == "succeeded":
+                user_obj = session.query(User).filter(User.id == user_id).first()
+                balance = getattr(user_obj, "fish_balance", 0) if user_obj else 0
+                await bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        "Оплата уже была успешно проведена ✅\n"
+                        f"Текущий баланс: {balance} 🐟"
+                    ),
+                )
+                return
+
+            yookassa_id = payment.yookassa_payment_id
+
+        try:
+            payment_data = await get_payment(yookassa_id)
+        except YooKassaError:
+            logger.exception("Не удалось получить статус платежа %s в ЮKassa", yookassa_id)
+            await asyncio.sleep(delay_seconds)
+            continue
+
+        status = payment_data.get("status")
+        paid = bool(payment_data.get("paid"))
+        payment_method = payment_data.get("payment_method") or {}
+        method_type = payment_method.get("type")
+
+        with SessionLocal() as session:
+            payment: Payment | None = session.query(Payment).filter(Payment.id == payment_db_id).first()
+            if not payment:
+                return
+
+            payment.status = status or payment.status
+            payment.method = method_type or payment.method
+            payment.updated_at = datetime.utcnow()
+
+            if status == "succeeded" and paid:
+                user_obj = session.query(User).filter(User.id == user_id).first()
+                if not user_obj:
+                    user_obj = User(id=user_id)
+                    session.add(user_obj)
+
+                current_balance = getattr(user_obj, "fish_balance", 0) or 0
+                user_obj.fish_balance = current_balance + payment.fish_amount
+                session.commit()
+                new_balance = user_obj.fish_balance
+
+                text_lines = [
+                    "Оплата прошла успешно ✨",
+                    f"Тебе начислено {payment.fish_amount} 🐟.",
+                    f"Твой новый баланс: {new_balance} 🐟",
+                ]
+                await bot.send_message(chat_id=user_id, text="\n".join(text_lines))
+                return
+
+            session.commit()
+
+        if status in {"canceled"}:
+            await bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "Платёж находится в статусе «отменён» или не был завершён.\n"
+                    "Если деньги всё же списались, напиши, пожалуйста, администратору."
+                ),
+            )
+            return
+
+        await asyncio.sleep(delay_seconds)
+
+    # Если после всех попыток платёж всё ещё не завершён
+    await bot.send_message(
+        chat_id=user_id,
+        text=(
+            "Платёж всё ещё в ожидании.\n"
+            "Если ты уже оплатил и деньги списались, вернись в этого бота "
+            "и нажми кнопку «Я оплатил, проверить» под последним сообщением об оплате."
+        ),
+    )
 
 
 @router.message(CommandStart())
@@ -180,6 +279,10 @@ async def cb_pay_tariff(cb: CallbackQuery) -> None:
         session.commit()
         session.refresh(db_payment)
         payment_db_id = db_payment.id
+
+    # Запускаем фоновую проверку статуса платежа
+    bot = cb.message.bot
+    asyncio.create_task(_auto_check_payment(bot, payment_db_id, user.id))
 
     text_lines = [
         f"Ты выбрал тариф на {amount_rub}₽.",
@@ -314,4 +417,3 @@ async def cb_check_payment(cb: CallbackQuery) -> None:
             "Платёж ещё не завершён. Если ты только что оплатил, подожди 1–2 минуты и нажми «Я оплатил, проверить» ещё раз.",
             reply_markup=_payment_actions_kb(payment_db_id),
         )
-
