@@ -31,6 +31,7 @@ from utils.db import SessionLocal, User
 from utils.push import send_push_card
 from utils.scheduler import DEFAULT_PUSH_TIME
 from llm.three_cards import generate_three_card_reading
+from utils.fish import tariff_to_amounts
 from .keyboards import (
     advice_draw_kb,
     choose_time_kb,
@@ -331,19 +332,10 @@ async def msg_fish_topup(message: Message, state: FSMContext) -> None:
         await message.answer("Эта функция пока доступна только администраторам.")
         return
 
-    data = await state.get_data()
-    # Просто помечаем, что заходим в выбор тарифа
-    await state.update_data(last_step="balance")
-    await state.set_state(FishPaymentStates.choosing_tariff)
-
-    # При желании сюда можно добавить картинку с тарифами
     await message.answer(
-        "Выберите, сколько рыбок хотите приобрести:\n"
-        "50₽ – 350 🐟\n"
-        "150₽ – 1050 🐟\n"
-        "300₽ – 2100 🐟\n"
-        "650₽ – 4550 🐟",
-        reply_markup=fish_tariff_kb(),
+        "Чтобы пополнить баланс рыбок, перейди в бота оплаты:\n"
+        "@Milky_payment_bot\n\n"
+        "Там можно выбрать тариф, оплатить через ЮKassa и вернуться обратно в Милки.",
     )
 
 
@@ -511,19 +503,6 @@ async def cb_fish_main_menu(cb: CallbackQuery, state: FSMContext) -> None:
     await cb.answer()
 
 
-def _fish_tariff_to_amounts(amount: int) -> tuple[int, int]:
-    """Вернуть (total_fish, bonus_fish) по сумме в рублях."""
-    if amount == 50:
-        return 350, 0
-    if amount == 150:
-        return 1050, 150
-    if amount == 300:
-        return 2100, 400
-    if amount == 650:
-        return 4550, 1000
-    return 0, 0
-
-
 @router.callback_query(F.data.startswith("fish_pay:"))
 async def cb_fish_pay(cb: CallbackQuery, state: FSMContext) -> None:
     user = cb.from_user
@@ -533,7 +512,7 @@ async def cb_fish_pay(cb: CallbackQuery, state: FSMContext) -> None:
 
     data = await state.get_data()
     amount = int(data.get("selected_tariff", 0) or 0)
-    total_fish, bonus_fish = _fish_tariff_to_amounts(amount)
+    total_fish, bonus_fish = tariff_to_amounts(amount)
     if total_fish == 0:
         await cb.answer("Не удалось определить тариф, попробуй ещё раз.")
         return

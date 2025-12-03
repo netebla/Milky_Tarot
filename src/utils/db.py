@@ -36,5 +36,34 @@ class User(Base):
     # Баланс внутренней валюты ("рыбки") для платных раскладов
     fish_balance = Column(Integer, default=0)
 
+
+class Payment(Base):
+    """
+    Платёж через ЮKassa.
+
+    Храним только данные, необходимые для проверки статуса
+    и начисления внутренней валюты пользователю.
+    """
+
+    __tablename__ = "payments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # Telegram ID пользователя, который платит
+    user_id = Column(Integer, index=True, nullable=False)
+    # Идентификатор платежа в ЮKassa (поле id)
+    yookassa_payment_id = Column(String, unique=True, index=True, nullable=False)
+    # Сумма к оплате в рублях
+    amount_rub = Column(Integer, nullable=False)
+    # Сколько "рыбок" будет начислено после успешной оплаты
+    fish_amount = Column(Integer, nullable=False)
+    # Статус: pending / succeeded / canceled / error
+    status = Column(String, default="pending", index=True, nullable=False)
+    # Человекочитаемый способ оплаты (например, "bank_card", "sbp")
+    method = Column(String, nullable=True)
+    description = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)

@@ -16,6 +16,22 @@ services:
       - TZ=${TZ:-Europe/Moscow}
     restart: unless-stopped
 
+  payment_bot:
+    build: .
+    container_name: tarot_payment_bot
+    depends_on:
+      - db
+    command: ["python", "-m", "bot.payment_main"]
+    environment:
+      - PAYMENT_BOT_TOKEN=${PAYMENT_BOT_TOKEN}
+      - ADMIN_ID=${ADMIN_ID}
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - YOOKASSA_SHOP_ID=${YOOKASSA_SHOP_ID}
+      - YOOKASSA_SECRET_KEY=${YOOKASSA_SECRET_KEY}
+      - YOOKASSA_RETURN_URL=${YOOKASSA_RETURN_URL:-https://t.me/Milky_Tarot_Bot}
+      - TZ=${TZ:-Europe/Moscow}
+    restart: unless-stopped
+
   db:
     image: postgres:15
     container_name: tarot_db
