@@ -332,10 +332,20 @@ async def msg_fish_topup(message: Message, state: FSMContext) -> None:
         await message.answer("Эта функция пока доступна только администраторам.")
         return
 
+    await state.clear()
     await message.answer(
-        "Чтобы пополнить баланс рыбок, перейди в бота оплаты:\n"
-        "@Milky_payment_bot\n\n"
+        "Чтобы пополнить баланс рыбок, перейди в бота оплаты.\n\n"
         "Там можно выбрать тариф, оплатить через ЮKassa и вернуться обратно в Милки.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Открыть бота оплаты",
+                        url="https://t.me/Milky_payment_bot",
+                    )
+                ]
+            ]
+        ),
     )
 
 
