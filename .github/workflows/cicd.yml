@@ -96,6 +96,10 @@ jobs:
             PROXY_URL=${{ secrets.PROXY_URL }}
             TZ=Europe/Moscow
             GITHUB_REPOSITORY_OWNER=${{ github.repository_owner }}
+            PAYMENT_BOT_TOKEN=${{ secrets.PAYMENT_BOT_TOKEN }}
+            YOOKASSA_SHOP_ID=${{ secrets.YOOKASSA_SHOP_ID }}
+            YOOKASSA_SECRET_KEY=${{ secrets.YOOKASSA_SECRET_KEY }}
+            YOOKASSA_RETURN_URL=${{ secrets.YOOKASSA_RETURN_URL }}
             EOF
 
       - name: Deploy compose stack
