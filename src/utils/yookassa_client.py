@@ -26,6 +26,9 @@ YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
 YOOKASSA_RETURN_URL = os.getenv("YOOKASSA_RETURN_URL", "https://t.me/Milky_Tarot_Bot")
 YOOKASSA_RECEIPT_PHONE = os.getenv("YOOKASSA_RECEIPT_PHONE", "79000000000")
 YOOKASSA_TAX_SYSTEM_CODE = os.getenv("YOOKASSA_TAX_SYSTEM_CODE")
+# Тип предмета расчёта и способ расчёта для чека (по умолчанию — услуга, полная предоплата)
+YOOKASSA_PAYMENT_SUBJECT = os.getenv("YOOKASSA_PAYMENT_SUBJECT", "service")
+YOOKASSA_PAYMENT_MODE = os.getenv("YOOKASSA_PAYMENT_MODE", "full_prepayment")
 
 
 class YooKassaError(Exception):
@@ -86,6 +89,9 @@ async def create_payment(
                     },
                     # Базовый код НДС, при необходимости можно переопределить через настройки магазина
                     "vat_code": 1,
+                    # Обязательные поля для предмета и способа расчёта
+                    "payment_subject": YOOKASSA_PAYMENT_SUBJECT,
+                    "payment_mode": YOOKASSA_PAYMENT_MODE,
                 }
             ],
         },
