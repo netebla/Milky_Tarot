@@ -63,6 +63,7 @@ ADMIN_IDS = {s.strip() for s in _ADMIN_RAW.split(",") if s.strip()}
 
 
 class ThreeCardsStates(StatesGroup):
+    waiting_context = State()
     waiting_question = State()
 
 
@@ -124,11 +125,8 @@ async def _start_three_cards_flow(message: Message, state: FSMContext) -> None:
             _get_or_create_user(session, user_id, username)
 
     selected_cards = random.sample(CARDS, 3)
-    await state.set_state(ThreeCardsStates.waiting_question)
+    await state.set_state(ThreeCardsStates.waiting_context)
     await state.update_data(three_cards=[card.title for card in selected_cards])
-    await message.answer(
-        'Задай вопрос к колоде и отправь его сообщением для расклада "Три карты".'
-    )
 
 
 async def _send_card_of_the_day(message: Message, user_id: int) -> None:
@@ -309,7 +307,7 @@ async def btn_settings(message: Message) -> None:
     )
 
 
-@router.message(F.text == '"Три карты"')
+@router.message(F.text == "Три ключа")
 async def btn_three_cards(message: Message, state: FSMContext) -> None:
     user = message.from_user
     if not user or not _is_admin(user.id):
@@ -317,6 +315,34 @@ async def btn_three_cards(message: Message, state: FSMContext) -> None:
         return
 
     await _start_three_cards_flow(message, state)
+
+    intro_text_1 = (
+        "Мяу, давай посмотрим, что подскажет тебе расклад из трёх карт! 😼 "
+        "Один такой расклад я могу делать для тебя бесплатно раз в день — "
+        "чтобы мои лапки не уставали и интуиция не рассыпалась, как сухой корм.\n"
+        "Если у тебя есть ещё вопросы, можешь подарить мне 69 рыбок, "
+        "и я соберу силы, чтобы вытянуть карты снова😻"
+    )
+    intro_text_2 = (
+        "Перед тем как спросить, коротко опиши свою ситуацию — так я лучше почувствую, "
+        "что происходит, и подберу точные ответы. Как расскажешь свою историю, нажми на кнопку "
+        "«Сразу к вопросу», и мы начнем!"
+    )
+
+    await message.answer(intro_text_1)
+    await message.answer(
+        intro_text_2,
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Сразу к вопросу",
+                        callback_data="three_keys_go_to_question",
+                    )
+                ]
+            ]
+        ),
+    )
 
 
 @router.callback_query(F.data == "change_push_time")
@@ -626,8 +652,16 @@ async def admin_stats(message: Message) -> None:
         # всего пользователей
         total_users = session.query(User).count()
 
-        # активные сегодня (у кого last_activity_date = сегодня)
-        active_today = session.query(User).filter(User.last_activity_date == date.today()).count()
+        # активные сегодня — пользователи, которые сегодня вытянули хотя бы одну карту
+        today = date.today()
+        active_today = (
+            session.query(User)
+            .filter(
+                User.draw_count > 0,
+                User.last_activity_date == today,
+            )
+            .count()
+        )
 
         # всего вытянуто карт (поле draw_count)
         total_draws = session.query(func.coalesce(func.sum(User.draw_count), 0)).scalar()
@@ -757,6 +791,45 @@ async def cmd_three_cards_test(message: Message, state: FSMContext) -> None:
     await _start_three_cards_flow(message, state)
 
 
+@router.message(ThreeCardsStates.waiting_context)
+async def handle_three_cards_context(message: Message, state: FSMContext) -> None:
+    """
+    Пользователь описывает ситуацию перед формулировкой вопроса.
+    Эти сообщения копятся в состоянии и будут переданы в LLM как контекст.
+    """
+    text = (message.text or message.caption or "").strip()
+    if not text:
+        await message.answer(
+            "Если хочешь, опиши свою ситуацию словами. "
+            "Когда будешь готов — нажми «Сразу к вопросу» и задай свой главный вопрос."
+        )
+        return
+
+    data = await state.get_data()
+    prev_context = (data.get("three_keys_context") or "").strip()
+    new_context = f"{prev_context}\n\n{text}" if prev_context else text
+    await state.update_data(three_keys_context=new_context)
+    await message.answer(
+        "Записала твою историю 🐾\n"
+        "Когда будешь готов — жми «Сразу к вопросу» и сформулируй, что именно хочешь узнать."
+    )
+
+
+@router.callback_query(F.data == "three_keys_go_to_question")
+async def cb_three_keys_go_to_question(cb: CallbackQuery, state: FSMContext) -> None:
+    user = cb.from_user
+    if not user or not _is_admin(user.id):
+        await cb.answer()
+        return
+
+    await state.set_state(ThreeCardsStates.waiting_question)
+    await cb.message.answer(
+        "Теперь сформулируй свой главный вопрос к раскладу «Три ключа» "
+        "и отправь его одним сообщением."
+    )
+    await cb.answer()
+
+
 @router.message(ThreeCardsStates.waiting_question)
 async def handle_three_cards_question(message: Message, state: FSMContext) -> None:
     if len(CARDS) < 3:
@@ -783,18 +856,74 @@ async def handle_three_cards_question(message: Message, state: FSMContext) -> No
         await message.answer("Пожалуйста, сформулируй вопрос текстом.")
         return
 
+    context_text = (data.get("three_keys_context") or "").strip()
+
     user = message.from_user
     user_id = user.id if user else None
     username = user.username if user else None
 
+    # Учёт бесплатного расклада и списание рыбок за повторные расклады
     if user_id is not None:
+        today = date.today()
         with SessionLocal() as session:
-            _get_or_create_user(session, user_id, username)
+            user_obj = session.query(User).filter(User.id == user_id).first()
+            if not user_obj:
+                user_obj = User(id=user_id, username=username)
+                session.add(user_obj)
+
+            last_date = getattr(user_obj, "three_keys_last_date", None)
+            daily_count = getattr(user_obj, "three_keys_daily_count", 0) or 0
+            if last_date != today:
+                daily_count = 0
+
+            # Первый расклад за день — бесплатный.
+            # Начиная со второго — списываем 69 рыбок, если хватает.
+            FREE_PER_DAY = 1
+            PRICE_FISH = 69
+
+            if daily_count >= FREE_PER_DAY:
+                balance = getattr(user_obj, "fish_balance", 0) or 0
+                if balance < PRICE_FISH:
+                    # Недостаточно рыбок — показываем голодную Милки и выходим.
+                    hungry_path = Path("src/data/images/hungry_milky.jpg")
+                    text = (
+                        "Мяу… Похоже, мои силы закончились.\n"
+                        "Вся моя магия на сегодня уже исчерпана, лапки устали, "
+                        "а в мисочке совсем нет рыбок 😿\n"
+                        "Если пополнишь баланс, я смогу продолжить прямо сейчас.\n"
+                        "А если нет — приходи завтра. К этому времени я отдохну, "
+                        "подкреплюсь и снова с радостью вытяну карты для тебя❤️"
+                    )
+                    if hungry_path.exists():
+                        try:
+                            await message.answer_photo(
+                                photo=BufferedInputFile(hungry_path.read_bytes(), filename=hungry_path.name),
+                                caption=text,
+                            )
+                        except TelegramBadRequest:
+                            await message.answer(text)
+                    else:
+                        await message.answer(text)
+                    await state.clear()
+                    return
+
+                # Списываем рыбки за расклад
+                user_obj.fish_balance = balance - PRICE_FISH
+
+            # Фиксируем факт расклада на сегодня
+            daily_count += 1
+            user_obj.three_keys_last_date = today
+            user_obj.three_keys_daily_count = daily_count
+            # Считаем количество вытянутых карт
+            user_obj.draw_count = (user_obj.draw_count or 0) + len(selected_cards)
+            user_obj.last_activity_date = today
+
+            session.commit()
 
     await message.answer("Колода тасуется... Подожди несколько секунд ✨")
 
     try:
-        interpretation = await generate_three_card_reading(selected_cards, question)
+        interpretation = await generate_three_card_reading(selected_cards, question, context=context_text)
     except Exception as exc:
         logger.exception("Ошибка при обращении к LLM: %s", exc)
         await message.answer("Не удалось получить трактовку. Попробуй чуть позже.")
@@ -830,7 +959,7 @@ async def handle_three_cards_question(message: Message, state: FSMContext) -> No
 
     cards_titles = ", ".join(card.title for card in selected_cards)
     response_text = (
-        'Расклад "Три карты"\n'
+        'Расклад "Три ключа"\n'
         f"Вопрос: {question}\n"
         f"Карты: {cards_titles}\n\n"
         f"{interpretation}"

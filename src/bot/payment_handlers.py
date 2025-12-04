@@ -19,8 +19,10 @@ import os
 from datetime import datetime
 
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message, BufferedInputFile
+from pathlib import Path
 from sqlalchemy.orm import Session
 
 from utils.db import SessionLocal, User, Payment
@@ -380,29 +382,46 @@ async def cb_check_payment(cb: CallbackQuery) -> None:
         payment.method = method_type or payment.method
         payment.updated_at = datetime.utcnow()
 
-        if status == "succeeded" and paid:
-            # Начисляем рыбки пользователю один раз
-            user_obj = session.query(User).filter(User.id == user.id).first()
-            if not user_obj:
-                user_obj = User(id=user.id, username=user.username)
-                session.add(user_obj)
+            if status == "succeeded" and paid:
+                # Начисляем рыбки пользователю один раз
+                user_obj = session.query(User).filter(User.id == user.id).first()
+                if not user_obj:
+                    user_obj = User(id=user.id, username=user.username)
+                    session.add(user_obj)
 
-            current_balance = getattr(user_obj, "fish_balance", 0) or 0
-            user_obj.fish_balance = current_balance + payment.fish_amount
+                current_balance = getattr(user_obj, "fish_balance", 0) or 0
+                user_obj.fish_balance = current_balance + payment.fish_amount
 
-            session.commit()
-            new_balance = user_obj.fish_balance
+                session.commit()
+                new_balance = user_obj.fish_balance
 
-            text_lines = [
-                "Оплата прошла успешно ✨",
-                f"Тебе начислено {payment.fish_amount} 🐟.",
-                f"Твой новый баланс: {new_balance} 🐟",
-            ]
-            await cb.message.answer(
-                "\n".join(text_lines),
-                reply_markup=_payment_actions_kb(payment_db_id),
-            )
-            return
+                text_lines = [
+                    "Оплата прошла успешно ✨",
+                    f"Тебе начислено {payment.fish_amount} 🐟.",
+                    f"Твой новый баланс: {new_balance} 🐟",
+                ]
+                await cb.message.answer(
+                    "\n".join(text_lines),
+                    reply_markup=_payment_actions_kb(payment_db_id),
+                )
+                # Дополнительное сообщение после пополнения баланса
+                fed_text = (
+                    "Спасибо за рыбки!💖💖💖\n"
+                    "Теперь я снова в порядке — сытая, собранная и готовая продолжать 😻\n"
+                    "Пиши свой вопрос — я уже готова вытянуть карты для тебя 🐈‍⬛"
+                )
+                fed_path = Path("src/data/images/fed_milky.jpg")
+                if fed_path.exists():
+                    try:
+                        await cb.message.answer_photo(
+                            photo=BufferedInputFile(fed_path.read_bytes(), filename=fed_path.name),
+                            caption=fed_text,
+                        )
+                    except TelegramBadRequest:
+                        await cb.message.answer(fed_text)
+                else:
+                    await cb.message.answer(fed_text)
+                return
 
         session.commit()
 

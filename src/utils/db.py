@@ -35,6 +35,9 @@ class User(Base):
     subscription_expires_at = Column(DateTime, nullable=True)
     # Баланс внутренней валюты ("рыбки") для платных раскладов
     fish_balance = Column(Integer, default=0)
+    # Использование премиального расклада "Три ключа"
+    three_keys_last_date = Column(Date, nullable=True)
+    three_keys_daily_count = Column(Integer, default=0)
 
 
 class Payment(Base):

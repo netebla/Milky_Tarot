@@ -8,7 +8,7 @@ def main_menu_kb(show_admin_features: bool = False) -> ReplyKeyboardMarkup:
     ]
 
     if show_admin_features:
-        keyboard.append([KeyboardButton(text='"Три карты"')])
+        keyboard.append([KeyboardButton(text="Три ключа")])
         keyboard.append([KeyboardButton(text="Мои рыбки")])
 
     keyboard.append([KeyboardButton(text="Мои настройки"), KeyboardButton(text="Помощь")])
