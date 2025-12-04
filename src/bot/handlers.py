@@ -870,6 +870,17 @@ async def cb_enter_name_manual(cb: CallbackQuery, state: FSMContext) -> None:
     await cb.answer()
 
 
+@router.message(OnboardingStates.asking_name)
+async def msg_name_direct(message: Message, state: FSMContext) -> None:
+    """
+    Поддержка ввода имени напрямую, без нажатия кнопки.
+
+    Если пользователь просто отвечает сообщением на вопрос «Твоё имя?»
+    вместо выбора «Ввести вручную», обрабатываем это как ручной ввод имени.
+    """
+    await msg_name_manual(message, state)
+
+
 @router.message(OnboardingStates.waiting_name_manual)
 async def msg_name_manual(message: Message, state: FSMContext) -> None:
     name = (message.text or "").strip()
