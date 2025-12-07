@@ -1002,7 +1002,7 @@ async def handle_three_cards_question(message: Message, state: FSMContext) -> No
     await message.answer(response_text)
     # После трактовки отправляем кастомный эмодзи с выбором следующего шага
     await message.answer(
-        '<tg-emoji emoji-id="5413703918947413540">🔑</tg-emoji>',
+        '<tg-emoji emoji-id="5413703918947413540">🐈‍⬛</tg-emoji>',
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [
