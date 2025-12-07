@@ -269,8 +269,8 @@ async def btn_help(message: Message) -> None:
 @router.message(F.text == "Мои рыбки")
 async def btn_my_fish(message: Message, state: FSMContext) -> None:
     user = message.from_user
-    if not user or not _is_admin(user.id):
-        await message.answer("Эта функция пока доступна только администраторам.")
+    if not user:
+        await message.answer("Сначала нажми /start 🚀")
         return
 
     with SessionLocal() as session:
@@ -310,8 +310,8 @@ async def btn_settings(message: Message) -> None:
 @router.message(F.text == "Три ключа")
 async def btn_three_cards(message: Message, state: FSMContext) -> None:
     user = message.from_user
-    if not user or not _is_admin(user.id):
-        await message.answer("Эта кнопка доступна только администраторам.")
+    if not user:
+        await message.answer("Сначала нажми /start 🚀")
         return
 
     await _start_three_cards_flow(message, state)
@@ -324,9 +324,8 @@ async def btn_three_cards(message: Message, state: FSMContext) -> None:
         "и я соберу силы, чтобы вытянуть карты снова😻"
     )
     intro_text_2 = (
-        "Перед тем как спросить, коротко опиши свою ситуацию — так я лучше почувствую, "
-        "что происходит, и подберу точные ответы. Как расскажешь свою историю, нажми на кнопку "
-        "«Сразу к вопросу», и мы начнем!"
+        "Перед тем как спросить, коротко опиши свою ситуацию — так я лучше почувствую, что происходит, и подберу точные ответы.\n"
+        "Если не готов рассказывать историю, нажми на кнопку «Сразу к вопросу», и мы начнем! 🌟"
     )
 
     await message.answer(intro_text_1)
@@ -354,8 +353,8 @@ async def cb_change_time(cb: CallbackQuery) -> None:
 @router.message(F.text == "Пополнить баланс 🐟")
 async def msg_fish_topup(message: Message, state: FSMContext) -> None:
     user = message.from_user
-    if not user or not _is_admin(user.id):
-        await message.answer("Эта функция пока доступна только администраторам.")
+    if not user:
+        await message.answer("Сначала нажми /start 🚀")
         return
 
     await state.clear()
@@ -373,6 +372,32 @@ async def msg_fish_topup(message: Message, state: FSMContext) -> None:
             ]
         ),
     )
+
+
+@router.callback_query(F.data == "fish_topup")
+async def cb_fish_topup(cb: CallbackQuery, state: FSMContext) -> None:
+    """Инлайн-кнопка пополнения баланса из экрана 'Мои рыбки'."""
+    user = cb.from_user
+    if not user:
+        await cb.answer()
+        return
+
+    await state.clear()
+    await cb.message.answer(
+        "Чтобы пополнить баланс рыбок, перейди в бота оплаты.\n\n"
+        "Там можно выбрать тариф, оплатить через ЮKassa и вернуться обратно в Милки.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Открыть бота оплаты",
+                        url="https://t.me/Milky_payment_bot",
+                    )
+                ]
+            ]
+        ),
+    )
+    await cb.answer()
 
 
 @router.message(F.text == "Главное меню")
@@ -820,11 +845,6 @@ async def handle_three_cards_context(message: Message, state: FSMContext) -> Non
 
 @router.callback_query(F.data == "three_keys_go_to_question")
 async def cb_three_keys_go_to_question(cb: CallbackQuery, state: FSMContext) -> None:
-    user = cb.from_user
-    if not user or not _is_admin(user.id):
-        await cb.answer()
-        return
-
     await state.set_state(ThreeCardsStates.waiting_question)
     await cb.message.answer(
         "Теперь сформулируй свой главный вопрос к раскладу «Три ключа» "
@@ -969,7 +989,85 @@ async def handle_three_cards_question(message: Message, state: FSMContext) -> No
     )
 
     await message.answer(response_text)
+    # После трактовки отправляем кастомный эмодзи с выбором следующего шага
+    await message.answer(
+        '<tg-emoji emoji-id="5413703918947413540">🔑</tg-emoji>',
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Хочу ещё расклад",
+                        callback_data="three_keys_again",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="Спасибо, Милки!",
+                        callback_data="three_keys_thanks",
+                    )
+                ],
+            ]
+        ),
+    )
     await state.clear()
+
+
+@router.callback_query(F.data == "three_keys_again")
+async def cb_three_keys_again(cb: CallbackQuery, state: FSMContext) -> None:
+    """Повторный запуск расклада 'Три ключа' по кнопке."""
+    user = cb.from_user
+    if not user:
+        await cb.answer()
+        return
+
+    await _start_three_cards_flow(cb.message, state)
+
+    intro_text_1 = (
+        "Мяу, давай посмотрим, что подскажет тебе ещё один расклад из трёх карт! 😼\n"
+        "Напоминаю: один расклад в день — бесплатно, дальше за 69 рыбок за каждый новый."
+    )
+    intro_text_2 = (
+        "Если хочешь, коротко опиши свою ситуацию, а потом задавай главный вопрос.\n"
+        "Если готовы сразу к вопросу — жми «Сразу к вопросу»."
+    )
+
+    await cb.message.answer(intro_text_1)
+    await cb.message.answer(
+        intro_text_2,
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Сразу к вопросу",
+                        callback_data="three_keys_go_to_question",
+                    )
+                ]
+            ]
+        ),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "three_keys_thanks")
+async def cb_three_keys_thanks(cb: CallbackQuery, state: FSMContext) -> None:
+    """Завершение диалога после расклада и переход в главное меню."""
+    user = cb.from_user
+    if not user:
+        await cb.answer()
+        return
+
+    await state.clear()
+    await cb.message.answer(
+        "Мяу! Пожалуйста! Рада буду видеть тебя снова💖😎"
+    )
+
+    bot = get_bot()
+    await bot.send_message(
+        chat_id=user.id,
+        text="Готово. Чем займёмся?",
+        reply_markup=main_menu_kb(_is_admin(user.id)),
+    )
+    await cb.answer()
 
 
 # -------- Онбординг: имя, ДР, часовой пояс --------

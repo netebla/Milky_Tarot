@@ -7,9 +7,9 @@ def main_menu_kb(show_admin_features: bool = False) -> ReplyKeyboardMarkup:
         [KeyboardButton(text="Узнать совет карт")],
     ]
 
-    if show_admin_features:
-        keyboard.append([KeyboardButton(text="Три ключа")])
-        keyboard.append([KeyboardButton(text="Мои рыбки")])
+    # Премиальный расклад и баланс доступны всем пользователям
+    keyboard.append([KeyboardButton(text="Три ключа")])
+    keyboard.append([KeyboardButton(text="Мои рыбки")])
 
     keyboard.append([KeyboardButton(text="Мои настройки"), KeyboardButton(text="Помощь")])
 
@@ -34,14 +34,12 @@ def settings_inline_kb(push_enabled: bool) -> InlineKeyboardMarkup:
 
 
 def fish_balance_kb() -> ReplyKeyboardMarkup:
-    """Клавиатура под экраном баланса рыбок."""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="Пополнить баланс 🐟")],
-            [KeyboardButton(text="Главное меню")],
-        ],
-        resize_keyboard=True,
-        input_field_placeholder="Выберите действие",
+    """Инлайн-клавиатура под сообщением с балансом рыбок."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Пополнить баланс 🐟", callback_data="fish_topup")],
+            [InlineKeyboardButton(text="Главное меню", callback_data="fish_main_menu")],
+        ]
     )
 
 
