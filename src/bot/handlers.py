@@ -917,16 +917,27 @@ async def handle_three_cards_question(message: Message, state: FSMContext) -> No
                         "А если нет — приходи завтра. К этому времени я отдохну, "
                         "подкреплюсь и снова с радостью вытяну карты для тебя❤️"
                     )
+                    kb_buy_fish = InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [
+                                InlineKeyboardButton(
+                                    text="Купить рыбки",
+                                    callback_data="three_keys_buy_fish",
+                                )
+                            ]
+                        ]
+                    )
                     if hungry_path.exists():
                         try:
                             await message.answer_photo(
                                 photo=BufferedInputFile(hungry_path.read_bytes(), filename=hungry_path.name),
                                 caption=text,
+                                reply_markup=kb_buy_fish,
                             )
                         except TelegramBadRequest:
-                            await message.answer(text)
+                            await message.answer(text, reply_markup=kb_buy_fish)
                     else:
-                        await message.answer(text)
+                        await message.answer(text, reply_markup=kb_buy_fish)
                     await state.clear()
                     return
 
@@ -1066,6 +1077,35 @@ async def cb_three_keys_thanks(cb: CallbackQuery, state: FSMContext) -> None:
         chat_id=user.id,
         text="Готово. Чем займёмся?",
         reply_markup=main_menu_kb(_is_admin(user.id)),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "three_keys_buy_fish")
+async def cb_three_keys_buy_fish(cb: CallbackQuery, state: FSMContext) -> None:
+    """
+    Кнопка из сообщения о нехватке рыбок в раскладе «Три ключа» —
+    приводит пользователя на экран «Мои рыбки».
+    """
+    user = cb.from_user
+    if not user:
+        await cb.answer()
+        return
+
+    with SessionLocal() as session:
+        db_user = session.query(User).filter(User.id == user.id).first()
+        if not db_user:
+            db_user = User(id=user.id)
+            session.add(db_user)
+            session.commit()
+        balance = getattr(db_user, "fish_balance", 0) or 0
+
+    await state.set_state(FishPaymentStates.viewing_balance)
+    await cb.message.answer(
+        f"На твоем балансе сейчас {balance} 🐟\n\n"
+        "Рыбки — это внутренняя валюта за расклады.\n"
+        "Можешь пополнить баланс или вернуться в главное меню.",
+        reply_markup=fish_balance_kb(),
     )
     await cb.answer()
 
