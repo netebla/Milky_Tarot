@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import csv
+import asyncio
 import logging
 import os
 import random
+import secrets
+import time
 from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -60,6 +63,7 @@ except Exception as e:
 
 _ADMIN_RAW = os.getenv("ADMIN_ID") or os.getenv("ADMIN_IDS") or ""
 ADMIN_IDS = {s.strip() for s in _ADMIN_RAW.split(",") if s.strip()}
+PENDING_PUSHES: dict[str, dict[str, object]] = {}
 
 
 class ThreeCardsStates(StatesGroup):
@@ -317,11 +321,13 @@ async def btn_three_cards(message: Message, state: FSMContext) -> None:
     await _start_three_cards_flow(message, state)
 
     intro_text_1 = (
-        "Мяу, давай посмотрим, что подскажет тебе расклад из трёх карт! 😼 "
-        "Один такой расклад я могу делать для тебя бесплатно раз в день — "
-        "чтобы мои лапки не уставали и интуиция не рассыпалась, как сухой корм.\n"
-        "Если у тебя есть ещё вопросы, можешь подарить мне 69 рыбок, "
-        "и я соберу силы, чтобы вытянуть карты снова😻"
+        "Мяу, давай посмотрим глубже 🐈‍⬛\n"
+        "«Три ключа» — это расклад из трёх карт, который показывает:\n"
+        "• что сейчас происходит,\n"
+        "• куда всё движется,\n"
+        "• к чему это может привести.\n\n"
+        "Один такой расклад я делаю бесплатно раз в день.\n"
+        "Если захочешь ещё — можно будет сделать дополнительный за рыбки."
     )
     intro_text_2 = (
         "Перед тем как спросить, коротко опиши свою ситуацию — так я лучше почувствую, что происходит, и подберу точные ответы.\n"
@@ -699,6 +705,106 @@ async def admin_stats(message: Message) -> None:
         )
     finally:
         session.close()
+
+
+@router.message(Command("admin_push"))
+async def admin_push(message: Message) -> None:
+    if str(message.from_user.id) not in ADMIN_IDS:
+        await message.answer("Недостаточно прав.")
+        return
+
+    parts = (message.text or "").split(" ", 1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.answer("Формат: /admin_push ТЕКСТ")
+        return
+
+    push_text = parts[1].strip()
+    token = secrets.token_urlsafe(8)
+    PENDING_PUSHES[token] = {
+        "text": push_text,
+        "created_at": time.time(),
+    }
+
+    await message.answer(
+        f"Проверь текст пуша и подтвердите отправку:\n\n{push_text}",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Подтвердить отправку",
+                        callback_data=f"admin_push_confirm:{token}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="Отменить",
+                        callback_data=f"admin_push_cancel:{token}",
+                    )
+                ],
+            ]
+        ),
+    )
+
+
+@router.callback_query(F.data.startswith("admin_push_confirm:"))
+async def cb_admin_push_confirm(cb: CallbackQuery) -> None:
+    if str(cb.from_user.id) not in ADMIN_IDS:
+        await cb.answer()
+        return
+
+    token = cb.data.split(":", 1)[1]
+    payload = PENDING_PUSHES.pop(token, None)
+    if not payload:
+        await cb.message.edit_text("Заявка на рассылку не найдена или устарела.")
+        await cb.answer()
+        return
+
+    push_text = str(payload.get("text", "")).strip()
+    if not push_text:
+        await cb.message.edit_text("Пустой текст рассылки. Отмена.")
+        await cb.answer()
+        return
+
+    await cb.message.edit_text("Запускаю рассылку…")
+
+    with SessionLocal() as session:
+        user_ids = [u.id for u in session.query(User.id).all()]
+
+    sent = 0
+    failed = 0
+    for uid in user_ids:
+        try:
+            await cb.bot.send_message(
+                chat_id=uid,
+                text=push_text,
+                reply_markup=main_menu_kb(_is_admin(uid)),
+            )
+            sent += 1
+        except TelegramBadRequest:
+            failed += 1
+        except TelegramNetworkError:
+            failed += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.05)
+
+    await cb.bot.send_message(
+        chat_id=cb.from_user.id,
+        text=f"Готово. Отправлено: {sent}, ошибок: {failed}",
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("admin_push_cancel:"))
+async def cb_admin_push_cancel(cb: CallbackQuery) -> None:
+    if str(cb.from_user.id) not in ADMIN_IDS:
+        await cb.answer()
+        return
+
+    token = cb.data.split(":", 1)[1]
+    PENDING_PUSHES.pop(token, None)
+    await cb.message.edit_text("Рассылка отменена.")
+    await cb.answer()
 
 class AdviceCard:
     def __init__(self, title: str, description: str):
