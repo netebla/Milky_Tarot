@@ -84,6 +84,10 @@ class FishPaymentStates(StatesGroup):
     choosing_payment_method = State()
 
 
+class AdminPushStates(StatesGroup):
+    waiting_text = State()
+
+
 def _is_admin(user_id: int) -> bool:
     return str(user_id) in ADMIN_IDS
 
@@ -708,25 +712,71 @@ async def admin_stats(message: Message) -> None:
 
 
 @router.message(Command("admin_push"))
-async def admin_push(message: Message) -> None:
+async def admin_push(message: Message, state: FSMContext) -> None:
     if str(message.from_user.id) not in ADMIN_IDS:
         await message.answer("Недостаточно прав.")
         return
 
     parts = (message.text or "").split(" ", 1)
     if len(parts) < 2 or not parts[1].strip():
-        await message.answer("Формат: /admin_push ТЕКСТ")
+        await message.answer(
+            "Пришли текст рассылки отдельным сообщением.\n"
+            "Форматирование (включая спойлеры) сохранится."
+        )
+        await state.set_state(AdminPushStates.waiting_text)
         return
 
-    push_text = parts[1].strip()
+    push_text_html = parts[1].strip()
     token = secrets.token_urlsafe(8)
     PENDING_PUSHES[token] = {
-        "text": push_text,
+        "text_html": push_text_html,
         "created_at": time.time(),
     }
 
     await message.answer(
-        f"Проверь текст пуша и подтвердите отправку:\n\n{push_text}",
+        f"Проверь текст пуша и подтвердите отправку:\n\n{push_text_html}",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Подтвердить отправку",
+                        callback_data=f"admin_push_confirm:{token}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="Отменить",
+                        callback_data=f"admin_push_cancel:{token}",
+                    )
+                ],
+            ]
+        ),
+    )
+
+
+@router.message(AdminPushStates.waiting_text)
+async def admin_push_text(message: Message, state: FSMContext) -> None:
+    if str(message.from_user.id) not in ADMIN_IDS:
+        await message.answer("Недостаточно прав.")
+        await state.clear()
+        return
+
+    push_text_html = (message.html_text or message.text or "").strip()
+    if not push_text_html:
+        await message.answer("Пожалуйста, отправь текст одним сообщением.")
+        return
+
+    token = secrets.token_urlsafe(8)
+    PENDING_PUSHES[token] = {
+        "text_html": push_text_html,
+        "created_at": time.time(),
+    }
+    await state.clear()
+
+    await message.answer(
+        f"Проверь текст пуша и подтвердите отправку:\n\n{push_text_html}",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -759,8 +809,8 @@ async def cb_admin_push_confirm(cb: CallbackQuery) -> None:
         await cb.answer()
         return
 
-    push_text = str(payload.get("text", "")).strip()
-    if not push_text:
+    push_text_html = str(payload.get("text_html") or payload.get("text") or "").strip()
+    if not push_text_html:
         await cb.message.edit_text("Пустой текст рассылки. Отмена.")
         await cb.answer()
         return
@@ -776,7 +826,8 @@ async def cb_admin_push_confirm(cb: CallbackQuery) -> None:
         try:
             await cb.bot.send_message(
                 chat_id=uid,
-                text=push_text,
+                text=push_text_html,
+                parse_mode="HTML",
                 reply_markup=main_menu_kb(_is_admin(uid)),
             )
             sent += 1
