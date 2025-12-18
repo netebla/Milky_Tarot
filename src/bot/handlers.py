@@ -802,17 +802,20 @@ async def cb_admin_push_confirm(cb: CallbackQuery) -> None:
         await cb.answer()
         return
 
+    try:
+        await cb.answer()
+    except TelegramBadRequest:
+        logger.warning("Admin push confirm callback expired for admin %s", cb.from_user.id)
+
     token = cb.data.split(":", 1)[1]
     payload = PENDING_PUSHES.pop(token, None)
     if not payload:
         await cb.message.edit_text("Заявка на рассылку не найдена или устарела.")
-        await cb.answer()
         return
 
     push_text_html = str(payload.get("text_html") or payload.get("text") or "").strip()
     if not push_text_html:
         await cb.message.edit_text("Пустой текст рассылки. Отмена.")
-        await cb.answer()
         return
 
     await cb.message.edit_text("Запускаю рассылку…")
@@ -832,10 +835,13 @@ async def cb_admin_push_confirm(cb: CallbackQuery) -> None:
             )
             sent += 1
         except TelegramBadRequest:
+            logger.warning("Admin push failed (bad request) for user_id=%s", uid)
             failed += 1
         except TelegramNetworkError:
+            logger.warning("Admin push failed (network) for user_id=%s", uid)
             failed += 1
         except Exception:
+            logger.exception("Admin push failed (unexpected) for user_id=%s", uid)
             failed += 1
         await asyncio.sleep(0.05)
 
@@ -843,7 +849,6 @@ async def cb_admin_push_confirm(cb: CallbackQuery) -> None:
         chat_id=cb.from_user.id,
         text=f"Готово. Отправлено: {sent}, ошибок: {failed}",
     )
-    await cb.answer()
 
 
 @router.callback_query(F.data.startswith("admin_push_cancel:"))
