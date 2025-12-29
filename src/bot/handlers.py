@@ -34,6 +34,7 @@ from utils.db import SessionLocal, User
 from utils.push import send_push_card
 from utils.scheduler import DEFAULT_PUSH_TIME
 from llm.three_cards import generate_three_card_reading
+from llm.new_year_reading import generate_new_year_reading, NEW_YEAR_QUESTIONS
 from utils.fish import tariff_to_amounts
 from .keyboards import (
     advice_draw_kb,
@@ -69,6 +70,10 @@ PENDING_PUSHES: dict[str, dict[str, object]] = {}
 class ThreeCardsStates(StatesGroup):
     waiting_context = State()
     waiting_question = State()
+
+
+class NewYearReadingStates(StatesGroup):
+    in_progress = State()
 
 
 class OnboardingStates(StatesGroup):
@@ -1551,4 +1556,253 @@ async def cb_cancel_tz(cb: CallbackQuery, state: FSMContext) -> None:
 async def cb_push_draw_card(cb: CallbackQuery) -> None:
     """Обработчик кнопки под пушем — вытянуть карту дня."""
     await _send_card_of_the_day(cb.message, cb.from_user.id)
+    await cb.answer()
+
+
+# -------- Новогодний расклад на 2026 год --------
+
+NEW_YEAR_READING_PRICE = 101
+
+
+@router.message(F.text == "Новогодний расклад 2026")
+async def btn_new_year_reading(message: Message, state: FSMContext) -> None:
+    """Начало новогоднего расклада."""
+    user = message.from_user
+    if not user:
+        await message.answer("Сначала нажми /start 🚀")
+        return
+
+    user_id = user.id
+    if not _is_admin(user_id):
+        await message.answer("Этот расклад пока доступен только для админов.")
+        return
+
+    # Проверяем баланс
+    with SessionLocal() as session:
+        db_user = session.query(User).filter(User.id == user_id).first()
+        if not db_user:
+            db_user = User(id=user_id, username=user.username)
+            session.add(db_user)
+            session.commit()
+
+        balance = getattr(db_user, "fish_balance", 0) or 0
+        if balance < NEW_YEAR_READING_PRICE:
+            hungry_path = Path("src/data/images/hungry_milky.jpg")
+            text = (
+                f"Мяу… Для новогоднего расклада нужно {NEW_YEAR_READING_PRICE} рыбок.\n"
+                f"На твоем балансе сейчас {balance} 🐟\n"
+                "Пополни баланс, чтобы начать расклад."
+            )
+            kb_buy_fish = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Пополнить баланс",
+                            callback_data="new_year_buy_fish",
+                        )
+                    ]
+                ]
+            )
+            if hungry_path.exists():
+                try:
+                    await message.answer_photo(
+                        photo=BufferedInputFile(hungry_path.read_bytes(), filename=hungry_path.name),
+                        caption=text,
+                        reply_markup=kb_buy_fish,
+                    )
+                except TelegramBadRequest:
+                    await message.answer(text, reply_markup=kb_buy_fish)
+            else:
+                await message.answer(text, reply_markup=kb_buy_fish)
+            return
+
+        # Списываем рыбки
+        db_user.fish_balance = balance - NEW_YEAR_READING_PRICE
+        session.commit()
+
+    # Инициализируем расклад
+    await state.set_state(NewYearReadingStates.in_progress)
+    await state.update_data(
+        new_year_question_index=0,
+        new_year_cards=[],
+    )
+
+    # Отправляем введение
+    intro_text = (
+        "🎄 Новогодний расклад на 2026 год 🎄\n\n"
+        "Этот расклад поможет тебе понять, что ждёт тебя в новом году. "
+        "Мы пройдём через 13 вопросов, которые охватят все важные сферы твоей жизни.\n\n"
+        "После каждого вопроса ты получишь карту и её трактовку, а затем сможешь перейти к следующему вопросу.\n\n"
+        "Готов начать? Нажми кнопку ниже, чтобы вытянуть первую карту!"
+    )
+
+    await message.answer(intro_text)
+    await message.answer(
+        "Вытянуть карту для первого вопроса",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Вытянуть карту",
+                        callback_data="new_year_draw_card",
+                    )
+                ]
+            ]
+        ),
+    )
+
+
+@router.callback_query(F.data == "new_year_draw_card")
+async def cb_new_year_draw_card(cb: CallbackQuery, state: FSMContext) -> None:
+    """Обработчик вытягивания карты для текущего вопроса новогоднего расклада."""
+    user = cb.from_user
+    if not user or not _is_admin(user.id):
+        await cb.answer()
+        return
+
+    data = await state.get_data()
+    question_index = data.get("new_year_question_index", 0)
+    
+    if question_index >= len(NEW_YEAR_QUESTIONS):
+        await cb.answer("Расклад завершён!")
+        await state.clear()
+        await cb.message.answer(
+            "🎉 Поздравляю! Ты прошёл весь новогодний расклад на 2026 год!\n\n"
+            "Надеюсь, карты помогли тебе лучше понять, что ждёт тебя в новом году. "
+            "Используй эти знания для планирования и принятия решений.\n\n"
+            "Удачи в 2026 году! ✨",
+            reply_markup=main_menu_kb(_is_admin(user.id)),
+        )
+        return
+
+    question_data = NEW_YEAR_QUESTIONS[question_index]
+    
+    # Выбираем случайную карту
+    if len(CARDS) < 1:
+        await cb.answer("Недостаточно карт для расклада.")
+        await state.clear()
+        return
+
+    selected_card = random.choice(CARDS)
+    
+    # Сохраняем карту
+    cards_list = data.get("new_year_cards", [])
+    cards_list.append(selected_card.title)
+    await state.update_data(new_year_cards=cards_list)
+
+    # Обновляем счетчик вытянутых карт в БД
+    with SessionLocal() as session:
+        db_user = session.query(User).filter(User.id == user.id).first()
+        if db_user:
+            db_user.draw_count = (db_user.draw_count or 0) + 1
+            db_user.last_activity_date = date.today()
+            session.commit()
+
+    await cb.answer()
+    await cb.message.answer("Колода тасуется... Подожди несколько секунд ✨")
+
+    # Генерируем трактовку
+    try:
+        interpretation = await generate_new_year_reading(
+            selected_card,
+            question_data,
+            question_index + 1,
+            len(NEW_YEAR_QUESTIONS),
+        )
+    except Exception as exc:
+        logger.exception("Ошибка при обращении к LLM для новогоднего расклада: %s", exc)
+        await cb.message.answer("Не удалось получить трактовку. Попробуй чуть позже.")
+        await state.clear()
+        return
+
+    # Отправляем карту
+    sent = False
+    local_path = getattr(selected_card, "image_path", None)
+    if callable(local_path):
+        path = local_path()
+        if path.exists():
+            try:
+                await cb.message.answer_photo(
+                    photo=BufferedInputFile(path.read_bytes(), filename=path.name),
+                    caption=selected_card.title,
+                )
+                sent = True
+            except TelegramBadRequest:
+                sent = False
+    if not sent:
+        try:
+            image_bytes = await _fetch_image_bytes(selected_card.image_url())
+            await cb.message.answer_photo(
+                photo=BufferedInputFile(image_bytes, filename=f"{selected_card.title}.jpg"),
+                caption=selected_card.title,
+            )
+            sent = True
+        except (httpx.HTTPError, TelegramBadRequest, TelegramNetworkError):
+            sent = False
+    if not sent:
+        await cb.message.answer(selected_card.title)
+
+    # Отправляем трактовку
+    response_text = (
+        f"📋 {question_data['category']}\n"
+        f"❓ {question_data['question']}\n\n"
+        f"{interpretation}"
+    )
+    await cb.message.answer(response_text)
+
+    # Обновляем индекс вопроса
+    question_index += 1
+    await state.update_data(new_year_question_index=question_index)
+
+    # Если это не последний вопрос, показываем кнопку для следующего
+    if question_index < len(NEW_YEAR_QUESTIONS):
+        next_question = NEW_YEAR_QUESTIONS[question_index]
+        await cb.message.answer(
+            f"Вопрос {question_index + 1} из {len(NEW_YEAR_QUESTIONS)}: {next_question['category']}",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Вытянуть карту для следующего вопроса",
+                            callback_data="new_year_draw_card",
+                        )
+                    ]
+                ]
+            ),
+        )
+    else:
+        # Последний вопрос завершён
+        await state.clear()
+        await cb.message.answer(
+            "🎉 Поздравляю! Ты прошёл весь новогодний расклад на 2026 год!\n\n"
+            "Надеюсь, карты помогли тебе лучше понять, что ждёт тебя в новом году. "
+            "Используй эти знания для планирования и принятия решений.\n\n"
+            "Удачи в 2026 году! ✨",
+            reply_markup=main_menu_kb(_is_admin(user.id)),
+        )
+
+
+@router.callback_query(F.data == "new_year_buy_fish")
+async def cb_new_year_buy_fish(cb: CallbackQuery, state: FSMContext) -> None:
+    """Кнопка пополнения баланса из новогоднего расклада."""
+    user = cb.from_user
+    if not user:
+        await cb.answer()
+        return
+
+    with SessionLocal() as session:
+        db_user = session.query(User).filter(User.id == user.id).first()
+        if not db_user:
+            db_user = User(id=user.id)
+            session.add(db_user)
+            session.commit()
+        balance = getattr(db_user, "fish_balance", 0) or 0
+
+    await state.set_state(FishPaymentStates.viewing_balance)
+    await cb.message.answer(
+        f"На твоем балансе сейчас {balance} 🐟\n\n"
+        "Рыбки — это внутренняя валюта за расклады.\n"
+        "Можешь пополнить баланс или вернуться в главное меню.",
+        reply_markup=fish_balance_kb(),
+    )
     await cb.answer()
