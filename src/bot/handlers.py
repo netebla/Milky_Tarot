@@ -315,7 +315,7 @@ async def btn_settings(message: Message) -> None:
     )
 
 
-@router.message(F.text == "Три ключа")
+@router.message(F.text == "Задать свой вопрос")
 async def btn_three_cards(message: Message, state: FSMContext) -> None:
     user = message.from_user
     if not user:
@@ -326,7 +326,7 @@ async def btn_three_cards(message: Message, state: FSMContext) -> None:
 
     intro_text_1 = (
         "Мяу, давай посмотрим глубже 🐈‍⬛\n"
-        "«Три ключа» — это расклад из трёх карт, который показывает:\n"
+        "«Задать свой вопрос» — это расклад из трёх карт, который показывает:\n"
         "• что сейчас происходит,\n"
         "• куда всё движется,\n"
         "• к чему это может привести.\n\n"
@@ -1000,7 +1000,7 @@ async def handle_three_cards_context(message: Message, state: FSMContext) -> Non
     await state.set_state(ThreeCardsStates.waiting_question)
     await message.answer(
         "Записала твою историю 🐾\n"
-        "Теперь сформулируй свой главный вопрос к раскладу «Три ключа» "
+        "Теперь сформулируй свой главный вопрос к раскладу «Задать свой вопрос» "
         "и отправь его одним сообщением."
     )
 
@@ -1009,7 +1009,7 @@ async def handle_three_cards_context(message: Message, state: FSMContext) -> Non
 async def cb_three_keys_go_to_question(cb: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(ThreeCardsStates.waiting_question)
     await cb.message.answer(
-        "Теперь сформулируй свой главный вопрос к раскладу «Три ключа» "
+        "Теперь сформулируй свой главный вопрос к раскладу «Задать свой вопрос» "
         "и отправь его одним сообщением."
     )
     await cb.answer()
@@ -1155,7 +1155,7 @@ async def handle_three_cards_question(message: Message, state: FSMContext) -> No
 
     cards_titles = ", ".join(card.title for card in selected_cards)
     response_text = (
-        'Расклад "Три ключа"\n'
+        'Расклад "Задать свой вопрос"\n'
         f"Вопрос: {question}\n"
         f"Карты: {cards_titles}\n\n"
         f"{interpretation}"
@@ -1187,7 +1187,7 @@ async def handle_three_cards_question(message: Message, state: FSMContext) -> No
 
 @router.callback_query(F.data == "three_keys_again")
 async def cb_three_keys_again(cb: CallbackQuery, state: FSMContext) -> None:
-    """Повторный запуск расклада 'Три ключа' по кнопке."""
+    """Повторный запуск расклада 'Задать свой вопрос' по кнопке."""
     user = cb.from_user
     if not user:
         await cb.answer()
@@ -1246,7 +1246,7 @@ async def cb_three_keys_thanks(cb: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data == "three_keys_buy_fish")
 async def cb_three_keys_buy_fish(cb: CallbackQuery, state: FSMContext) -> None:
     """
-    Кнопка из сообщения о нехватке рыбок в раскладе «Три ключа» —
+    Кнопка из сообщения о нехватке рыбок в раскладе «Задать свой вопрос» —
     приводит пользователя на экран «Мои рыбки».
     """
     user = cb.from_user

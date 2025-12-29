@@ -8,7 +8,7 @@ def main_menu_kb(show_admin_features: bool = False) -> ReplyKeyboardMarkup:
     ]
 
     # Премиальный расклад и баланс доступны всем пользователям
-    keyboard.append([KeyboardButton(text="Три ключа")])
+    keyboard.append([KeyboardButton(text="Задать свой вопрос")])
     keyboard.append([KeyboardButton(text="Мои рыбки")])
 
     keyboard.append([KeyboardButton(text="Мои настройки"), KeyboardButton(text="Помощь")])
