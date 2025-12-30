@@ -377,7 +377,7 @@ async def cb_check_payment(cb: CallbackQuery) -> None:
         payment.method = method_type or payment.method
         payment.updated_at = datetime.utcnow()
 
-            if status == "succeeded" and paid:
+        if status == "succeeded" and paid:
                 # Начисляем рыбки пользователю один раз
                 user_obj = session.query(User).filter(User.id == user.id).first()
                 if not user_obj:

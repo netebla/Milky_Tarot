@@ -48,6 +48,9 @@ from .keyboards import (
     fish_balance_kb,
     fish_tariff_kb,
     fish_payment_method_kb,
+    admin_push_with_reading_kb,
+    admin_push_type_kb,
+    admin_push_year_energy_kb,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,6 +99,7 @@ class FishPaymentStates(StatesGroup):
 
 class AdminPushStates(StatesGroup):
     waiting_text = State()
+    waiting_push_type = State()
 
 
 def _is_admin(user_id: int) -> bool:
@@ -741,27 +745,13 @@ async def admin_push(message: Message, state: FSMContext) -> None:
     PENDING_PUSHES[token] = {
         "text_html": push_text_html,
         "created_at": time.time(),
+        "push_type": None,
     }
 
     await message.answer(
-        f"Проверь текст пуша и подтвердите отправку:\n\n{push_text_html}",
+        f"Проверь текст пуша и выбери тип:\n\n{push_text_html}",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Подтвердить отправку",
-                        callback_data=f"admin_push_confirm:{token}",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="Отменить",
-                        callback_data=f"admin_push_cancel:{token}",
-                    )
-                ],
-            ]
-        ),
+        reply_markup=admin_push_type_kb(token),
     )
 
 
@@ -781,28 +771,14 @@ async def admin_push_text(message: Message, state: FSMContext) -> None:
     PENDING_PUSHES[token] = {
         "text_html": push_text_html,
         "created_at": time.time(),
+        "push_type": None,
     }
     await state.clear()
 
     await message.answer(
-        f"Проверь текст пуша и подтвердите отправку:\n\n{push_text_html}",
+        f"Проверь текст пуша и выбери тип:\n\n{push_text_html}",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Подтвердить отправку",
-                        callback_data=f"admin_push_confirm:{token}",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="Отменить",
-                        callback_data=f"admin_push_cancel:{token}",
-                    )
-                ],
-            ]
-        ),
+        reply_markup=admin_push_type_kb(token),
     )
 
 
@@ -828,21 +804,40 @@ async def cb_admin_push_confirm(cb: CallbackQuery) -> None:
         await cb.message.edit_text("Пустой текст рассылки. Отмена.")
         return
 
+    push_type = payload.get("push_type", "simple")
+
     await cb.message.edit_text("Запускаю рассылку…")
 
     with SessionLocal() as session:
         user_ids = [u.id for u in session.query(User.id).all()]
 
+    # Выбираем клавиатуру в зависимости от типа пуша
+    if push_type == "reading":
+        reply_markup = admin_push_with_reading_kb()
+    elif push_type == "year_energy":
+        reply_markup = admin_push_year_energy_kb()
+    else:  # simple или по умолчанию
+        reply_markup = None  # Будет использовано главное меню
+
     sent = 0
     failed = 0
     for uid in user_ids:
         try:
-            await cb.bot.send_message(
-                chat_id=uid,
-                text=push_text_html,
-                parse_mode="HTML",
-                reply_markup=main_menu_kb(_is_admin(uid)),
-            )
+            # Для обычного пуша используем главное меню
+            if push_type == "simple" or reply_markup is None:
+                await cb.bot.send_message(
+                    chat_id=uid,
+                    text=push_text_html,
+                    parse_mode="HTML",
+                    reply_markup=main_menu_kb(_is_admin(uid)),
+                )
+            else:
+                await cb.bot.send_message(
+                    chat_id=uid,
+                    text=push_text_html,
+                    parse_mode="HTML",
+                    reply_markup=reply_markup,
+                )
             sent += 1
         except TelegramBadRequest:
             logger.warning("Admin push failed (bad request) for user_id=%s", uid)
@@ -861,6 +856,94 @@ async def cb_admin_push_confirm(cb: CallbackQuery) -> None:
     )
 
 
+@router.callback_query(F.data.startswith("admin_push_type:"))
+async def cb_admin_push_type(cb: CallbackQuery) -> None:
+    """Обработчик выбора типа пуша."""
+    if str(cb.from_user.id) not in ADMIN_IDS:
+        await cb.answer()
+        return
+
+    try:
+        await cb.answer()
+    except TelegramBadRequest:
+        logger.warning("Admin push type callback expired for admin %s", cb.from_user.id)
+
+    # Формат: admin_push_type:simple:token или admin_push_type:reading:token или admin_push_type:year_energy:token
+    parts = cb.data.split(":", 2)
+    if len(parts) < 3:
+        await cb.message.edit_text("Ошибка в данных. Попробуй снова.")
+        return
+
+    push_type = parts[1]  # simple, reading, year_energy
+    token = parts[2]
+
+    payload = PENDING_PUSHES.get(token)
+    if not payload:
+        await cb.message.edit_text("Заявка на рассылку не найдена или устарела.")
+        return
+
+    payload["push_type"] = push_type
+
+    push_type_names = {
+        "simple": "Обычный пуш (главное меню)",
+        "reading": "С раскладом 'Задать вопрос'",
+        "year_energy": "С раскладом 'Энергия года'",
+    }
+
+    push_text_html = str(payload.get("text_html") or "").strip()
+    await cb.message.edit_text(
+        f"Тип пуша: {push_type_names.get(push_type, push_type)}\n\n"
+        f"Текст:\n{push_text_html}",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Подтвердить отправку",
+                        callback_data=f"admin_push_confirm:{token}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="Изменить тип",
+                        callback_data=f"admin_push_type_back:{token}",
+                    ),
+                    InlineKeyboardButton(
+                        text="Отменить",
+                        callback_data=f"admin_push_cancel:{token}",
+                    )
+                ],
+            ]
+        ),
+    )
+
+
+@router.callback_query(F.data.startswith("admin_push_type_back:"))
+async def cb_admin_push_type_back(cb: CallbackQuery) -> None:
+    """Возврат к выбору типа пуша."""
+    if str(cb.from_user.id) not in ADMIN_IDS:
+        await cb.answer()
+        return
+
+    try:
+        await cb.answer()
+    except TelegramBadRequest:
+        pass
+
+    token = cb.data.split(":", 1)[1]
+    payload = PENDING_PUSHES.get(token)
+    if not payload:
+        await cb.message.edit_text("Заявка на рассылку не найдена или устарела.")
+        return
+
+    push_text_html = str(payload.get("text_html") or "").strip()
+    await cb.message.edit_text(
+        f"Проверь текст пуша и выбери тип:\n\n{push_text_html}",
+        parse_mode="HTML",
+        reply_markup=admin_push_type_kb(token),
+    )
+
+
 @router.callback_query(F.data.startswith("admin_push_cancel:"))
 async def cb_admin_push_cancel(cb: CallbackQuery) -> None:
     if str(cb.from_user.id) not in ADMIN_IDS:
@@ -871,6 +954,129 @@ async def cb_admin_push_cancel(cb: CallbackQuery) -> None:
     PENDING_PUSHES.pop(token, None)
     await cb.message.edit_text("Рассылка отменена.")
     await cb.answer()
+
+
+@router.callback_query(F.data == "admin_push_start_reading")
+async def cb_admin_push_start_reading(cb: CallbackQuery, state: FSMContext) -> None:
+    """Обработчик кнопки 'Начать расклад' из единоразового пуша."""
+    user = cb.from_user
+    if not user:
+        await cb.answer()
+        return
+
+    await cb.answer()
+    await _start_three_cards_flow(cb.message, state)
+
+    intro_text_1 = (
+        "Мяу, давай посмотрим глубже 🐈‍⬛\n"
+        "«Задать свой вопрос» — это расклад из трёх карт, который показывает:\n"
+        "• что сейчас происходит,\n"
+        "• куда всё движется,\n"
+        "• к чему это может привести.\n\n"
+        "Один такой расклад я делаю бесплатно раз в день.\n"
+        "Если захочешь ещё — можно будет сделать дополнительный за рыбки."
+    )
+    intro_text_2 = (
+        "Перед тем как спросить, коротко опиши свою ситуацию — так я лучше почувствую, что происходит, и подберу точные ответы.\n"
+        "Если не готов рассказывать историю, нажми на кнопку «Сразу к вопросу», и мы начнем! 🌟"
+    )
+
+    await cb.message.answer(intro_text_1)
+    await cb.message.answer(
+        intro_text_2,
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Сразу к вопросу",
+                        callback_data="three_keys_go_to_question",
+                    )
+                ]
+            ]
+        ),
+    )
+
+
+@router.callback_query(F.data == "admin_push_year_energy")
+async def cb_admin_push_year_energy(cb: CallbackQuery, state: FSMContext) -> None:
+    """Обработчик кнопки 'Узнать энергию года' из единоразового пуша."""
+    user = cb.from_user
+    if not user:
+        await cb.answer()
+        return
+
+    await cb.answer()
+
+    # Загружаем архетипы
+    archetypes = load_year_energy_archetypes()
+    if not archetypes:
+        await cb.message.answer("К сожалению, данные для расклада временно недоступны.")
+        return
+
+    # Выбираем случайную карту из доступных архетипов
+    available_cards = [card for card in CARDS if card.title in archetypes]
+    if not available_cards:
+        await cb.message.answer("Не найдено карт для расклада.")
+        return
+
+    selected_card = random.choice(available_cards)
+    archetype_description = archetypes[selected_card.title]
+
+    # Отправляем карту
+    sent = False
+    local_path = getattr(selected_card, "image_path", None)
+    if callable(local_path):
+        path = local_path()
+        if path.exists():
+            try:
+                await cb.message.answer_photo(
+                    photo=BufferedInputFile(path.read_bytes(), filename=path.name),
+                    caption=selected_card.title,
+                )
+                sent = True
+            except TelegramBadRequest:
+                sent = False
+    if not sent:
+        try:
+            image_bytes = await _fetch_image_bytes(selected_card.image_url())
+            await cb.message.answer_photo(
+                photo=BufferedInputFile(image_bytes, filename=f"{selected_card.title}.jpg"),
+                caption=selected_card.title,
+            )
+            sent = True
+        except (httpx.HTTPError, TelegramBadRequest, TelegramNetworkError):
+            sent = False
+    if not sent:
+        await cb.message.answer(selected_card.title)
+
+    # Отправляем трактовку архетипа
+    await cb.message.answer(
+        f"✨ Энергия года: {selected_card.title} ✨\n\n{archetype_description}"
+    )
+
+    # Отправляем сообщение с предложением платного расклада
+    await cb.message.answer(
+        "Отлично, Архетип года пойман. 😈\n"
+        "Хочешь разобрать его глубже? Могу сделать подробный расклад на год: где будет рост, где проверка, что станет твоей опорой и какой шанс важно не пропустить.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Разобрать глубже (101 🐟)",
+                        callback_data="year_energy_deep_reading",
+                    )
+                ]
+            ]
+        ),
+    )
+
+    # Обновляем статистику
+    with SessionLocal() as session:
+        db_user = _get_or_create_user(session, user.id, user.username)
+        db_user.draw_count = (db_user.draw_count or 0) + 1
+        db_user.last_activity_date = date.today()
+        session.commit()
+
 
 class AdviceCard:
     def __init__(self, title: str, description: str):
@@ -1893,10 +2099,28 @@ async def cb_new_year_buy_fish(cb: CallbackQuery, state: FSMContext) -> None:
 
 
 # -------- Расклад "Энергия года" (бесплатный, только для админов) --------
+#
+# Расклад позволяет получить архетип года - случайную карту старших арканов
+# с трактовкой того, какая энергия будет преобладать в году.
+# После получения трактовки пользователю предлагается перейти к платному
+# раскладу "Итоги года" (101 рыбка, 13 вопросов).
+#
+# Данные архетипов загружаются из CSV файла year_energy_archetypes.csv,
+# который создаётся парсером parse_year_energy.py из docx файла.
 
 @router.message(F.text == "Энергия года")
 async def btn_year_energy(message: Message, state: FSMContext) -> None:
-    """Обработчик кнопки 'Энергия года'."""
+    """
+    Обработчик кнопки 'Энергия года'.
+    
+    Выполняет бесплатный расклад:
+    1. Выбирает случайную карту из доступных архетипов
+    2. Отправляет изображение карты
+    3. Отправляет трактовку архетипа года
+    4. Предлагает перейти к платному раскладу "Итоги года"
+    
+    Доступен только администраторам.
+    """
     user = message.from_user
     if not user:
         return
@@ -1979,7 +2203,15 @@ async def btn_year_energy(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "year_energy_deep_reading")
 async def cb_year_energy_deep_reading(cb: CallbackQuery, state: FSMContext) -> None:
-    """Обработчик кнопки перехода к платному раскладу 'Итоги года'."""
+    """
+    Обработчик кнопки перехода к платному раскладу 'Итоги года'.
+    
+    Проверяет баланс пользователя (нужно 101 рыбка) и запускает
+    новогодний расклад с 13 вопросами, если баланс достаточен.
+    Если баланса недостаточно, предлагает пополнить его.
+    
+    Доступен только администраторам.
+    """
     user = cb.from_user
     if not user:
         await cb.answer()

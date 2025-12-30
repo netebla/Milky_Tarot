@@ -159,3 +159,33 @@ def choose_tz_mode_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Отмена", callback_data="cancel_tz")],
         ]
     )
+
+
+def admin_push_with_reading_kb() -> InlineKeyboardMarkup:
+    """Клавиатура для единоразового пуша с кнопкой начала расклада."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Начать расклад", callback_data="admin_push_start_reading")],
+        ]
+    )
+
+
+def admin_push_type_kb(token: str) -> InlineKeyboardMarkup:
+    """Клавиатура выбора типа пуша для админа."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Обычный пуш (главное меню)", callback_data=f"admin_push_type:simple:{token}")],
+            [InlineKeyboardButton(text="С раскладом 'Задать вопрос'", callback_data=f"admin_push_type:reading:{token}")],
+            [InlineKeyboardButton(text="С раскладом 'Энергия года'", callback_data=f"admin_push_type:year_energy:{token}")],
+            [InlineKeyboardButton(text="Отменить", callback_data=f"admin_push_cancel:{token}")],
+        ]
+    )
+
+
+def admin_push_year_energy_kb() -> InlineKeyboardMarkup:
+    """Клавиатура для единоразового пуша с кнопкой 'Узнать энергию года'."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Узнать энергию года", callback_data="admin_push_year_energy")],
+        ]
+    )
