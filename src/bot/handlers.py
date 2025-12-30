@@ -30,6 +30,7 @@ from utils.cards_loader import (
     choose_random_card,
     load_cards,
 )
+from utils.year_energy_loader import load_year_energy_archetypes, get_archetype_by_card
 from utils.db import SessionLocal, User
 from utils.push import send_push_card
 from utils.scheduler import DEFAULT_PUSH_TIME
@@ -74,6 +75,10 @@ class ThreeCardsStates(StatesGroup):
 
 class NewYearReadingStates(StatesGroup):
     in_progress = State()
+
+
+class YearEnergyStates(StatesGroup):
+    waiting_selection = State()
 
 
 class OnboardingStates(StatesGroup):
@@ -1202,11 +1207,11 @@ async def cb_three_keys_again(cb: CallbackQuery, state: FSMContext) -> None:
 
     intro_text_1 = (
         "Мяу, давай посмотрим, что подскажет тебе ещё один расклад из трёх карт! 😼\n"
-        "Напоминаю: один расклад в день — бесплатно, дальше за 69 рыбок за каждый новый."
+        "Напоминаю: один расклад в день — бесплатно, дальше - 69 рыбок."
     )
     intro_text_2 = (
         "Если хочешь, коротко опиши свою ситуацию, а потом задавай главный вопрос.\n"
-        "Если готовы сразу к вопросу — жми «Сразу к вопросу»."
+        "Если нет — жми «Сразу к вопросу»."
     )
 
     await cb.message.answer(intro_text_1)
@@ -1252,27 +1257,27 @@ async def cb_three_keys_thanks(cb: CallbackQuery, state: FSMContext) -> None:
 async def cb_three_keys_buy_fish(cb: CallbackQuery, state: FSMContext) -> None:
     """
     Кнопка из сообщения о нехватке рыбок в раскладе «Задать свой вопрос» —
-    приводит пользователя на экран «Мои рыбки».
+    сразу предлагает перейти в бота оплаты.
     """
     user = cb.from_user
     if not user:
         await cb.answer()
         return
 
-    with SessionLocal() as session:
-        db_user = session.query(User).filter(User.id == user.id).first()
-        if not db_user:
-            db_user = User(id=user.id)
-            session.add(db_user)
-            session.commit()
-        balance = getattr(db_user, "fish_balance", 0) or 0
-
-    await state.set_state(FishPaymentStates.viewing_balance)
+    await state.clear()
     await cb.message.answer(
-        f"На твоем балансе сейчас {balance} 🐟\n\n"
-        "Рыбки — это внутренняя валюта за расклады.\n"
-        "Можешь пополнить баланс или вернуться в главное меню.",
-        reply_markup=fish_balance_kb(),
+        "Чтобы пополнить баланс рыбок, перейди в бота оплаты.\n\n"
+        "Там можно выбрать тариф, оплатить через ЮKassa и вернуться обратно в Милки.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Открыть бота оплаты",
+                        url="https://t.me/Milky_payment_bot",
+                    )
+                ]
+            ]
+        ),
     )
     await cb.answer()
 
@@ -1885,3 +1890,185 @@ async def cb_new_year_buy_fish(cb: CallbackQuery, state: FSMContext) -> None:
         reply_markup=fish_balance_kb(),
     )
     await cb.answer()
+
+
+# -------- Расклад "Энергия года" (бесплатный, только для админов) --------
+
+@router.message(F.text == "Энергия года")
+async def btn_year_energy(message: Message, state: FSMContext) -> None:
+    """Обработчик кнопки 'Энергия года'."""
+    user = message.from_user
+    if not user:
+        return
+    
+    # Проверяем, что пользователь - админ
+    if not _is_admin(user.id):
+        await message.answer("Эта функция доступна только администраторам.")
+        return
+    
+    # Загружаем архетипы
+    archetypes = load_year_energy_archetypes()
+    if not archetypes:
+        await message.answer("К сожалению, данные для расклада временно недоступны.")
+        return
+    
+    # Выбираем случайную карту из доступных архетипов
+    available_cards = [card for card in CARDS if card.title in archetypes]
+    if not available_cards:
+        await message.answer("Не найдено карт для расклада.")
+        return
+    
+    selected_card = random.choice(available_cards)
+    archetype_description = archetypes[selected_card.title]
+    
+    # Отправляем карту
+    sent = False
+    local_path = getattr(selected_card, "image_path", None)
+    if callable(local_path):
+        path = local_path()
+        if path.exists():
+            try:
+                await message.answer_photo(
+                    photo=BufferedInputFile(path.read_bytes(), filename=path.name),
+                    caption=selected_card.title,
+                )
+                sent = True
+            except TelegramBadRequest:
+                sent = False
+    if not sent:
+        try:
+            image_bytes = await _fetch_image_bytes(selected_card.image_url())
+            await message.answer_photo(
+                photo=BufferedInputFile(image_bytes, filename=f"{selected_card.title}.jpg"),
+                caption=selected_card.title,
+            )
+            sent = True
+        except (httpx.HTTPError, TelegramBadRequest, TelegramNetworkError):
+            sent = False
+    if not sent:
+        await message.answer(selected_card.title)
+    
+    # Отправляем трактовку архетипа
+    await message.answer(
+        f"✨ Энергия года: {selected_card.title} ✨\n\n{archetype_description}"
+    )
+    
+    # Отправляем сообщение с предложением платного расклада
+    await message.answer(
+        "Отлично, Архетип года пойман. 😈\n"
+        "Хочешь разобрать его глубже? Могу сделать подробный расклад на год: где будет рост, где проверка, что станет твоей опорой и какой шанс важно не пропустить.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Разобрать глубже (101 🐟)",
+                        callback_data="year_energy_deep_reading",
+                    )
+                ]
+            ]
+        ),
+    )
+    
+    # Обновляем статистику
+    with SessionLocal() as session:
+        db_user = _get_or_create_user(session, user.id, user.username)
+        db_user.draw_count = (db_user.draw_count or 0) + 1
+        db_user.last_activity_date = date.today()
+        session.commit()
+
+
+@router.callback_query(F.data == "year_energy_deep_reading")
+async def cb_year_energy_deep_reading(cb: CallbackQuery, state: FSMContext) -> None:
+    """Обработчик кнопки перехода к платному раскладу 'Итоги года'."""
+    user = cb.from_user
+    if not user:
+        await cb.answer()
+        return
+    
+    # Проверяем, что пользователь - админ
+    if not _is_admin(user.id):
+        await cb.answer("Эта функция доступна только администраторам.")
+        return
+    
+    await cb.answer()
+    
+    # Проверяем баланс и запускаем новогодний расклад
+    user_id = user.id
+    with SessionLocal() as session:
+        db_user = _get_or_create_user(session, user_id, user.username)
+        balance = getattr(db_user, "fish_balance", 0) or 0
+        
+        if balance < NEW_YEAR_READING_PRICE:
+            text = (
+                f"Мяу… Для подробного расклада на год нужно {NEW_YEAR_READING_PRICE} рыбок.\n"
+                f"У тебя сейчас {balance} 🐟\n\n"
+                "Пополни баланс, чтобы получить полный расклад на год с 13 вопросами!"
+            )
+            kb_buy_fish = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Пополнить баланс",
+                            callback_data="new_year_buy_fish",
+                        )
+                    ]
+                ]
+            )
+            hungry_path = Path("src/data/images/hungry_milky.jpg")
+            if hungry_path.exists():
+                try:
+                    await cb.message.answer_photo(
+                        photo=BufferedInputFile(hungry_path.read_bytes(), filename=hungry_path.name),
+                        caption=text,
+                        reply_markup=kb_buy_fish,
+                    )
+                except TelegramBadRequest:
+                    await cb.message.answer(text, reply_markup=kb_buy_fish)
+            else:
+                await cb.message.answer(text, reply_markup=kb_buy_fish)
+            return
+        
+        # Списываем рыбки
+        db_user.fish_balance = balance - NEW_YEAR_READING_PRICE
+        session.commit()
+    
+    # Инициализируем расклад
+    await state.set_state(NewYearReadingStates.in_progress)
+    await state.update_data(
+        new_year_question_index=0,
+        new_year_cards=[],
+        new_year_ready_answers={},
+    )
+    
+    # Отправляем введение
+    intro_text = (
+        "🎄 Подробный расклад на год 🎄\n\n"
+        "Этот расклад поможет тебе понять, что ждёт тебя в новом году. "
+        "Мы пройдём через 13 вопросов, которые охватят все важные сферы твоей жизни.\n\n"
+        "После каждого вопроса ты получишь карту и её трактовку, а затем сможешь перейти к следующему вопросу.\n\n"
+        "Готов начать? Нажми кнопку ниже, чтобы вытянуть первую карту!"
+    )
+    
+    await cb.message.answer(intro_text)
+    await cb.message.answer(
+        "Вытянуть карту для первого вопроса",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Вытянуть карту",
+                        callback_data="new_year_draw_card",
+                    )
+                ]
+            ]
+        ),
+    )
+    
+    # Запускаем фоновую генерацию первого вопроса
+    bot = get_bot()
+    asyncio.create_task(_generate_next_question_background(
+        user_id,
+        0,
+        state,
+        bot,
+    ))

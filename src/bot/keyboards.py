@@ -11,9 +11,10 @@ def main_menu_kb(show_admin_features: bool = False) -> ReplyKeyboardMarkup:
     keyboard.append([KeyboardButton(text="Задать свой вопрос")])
     keyboard.append([KeyboardButton(text="Мои рыбки")])
 
-    # Новогодний расклад только для админов
+    # Новогодний расклад и Энергия года только для админов
     if show_admin_features:
         keyboard.append([KeyboardButton(text="Новогодний расклад 2026")])
+        keyboard.append([KeyboardButton(text="Энергия года")])
 
     keyboard.append([KeyboardButton(text="Мои настройки"), KeyboardButton(text="Помощь")])
 
