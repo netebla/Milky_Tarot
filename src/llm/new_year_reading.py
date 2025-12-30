@@ -94,3 +94,4 @@ async def generate_new_year_reading(card: Card, question_data: dict[str, str], q
     prompt = build_rag_prompt(base_prompt, [card])
     return await ask_llm(prompt)
 
+

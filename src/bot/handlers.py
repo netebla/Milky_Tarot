@@ -1625,6 +1625,7 @@ async def btn_new_year_reading(message: Message, state: FSMContext) -> None:
     await state.update_data(
         new_year_question_index=0,
         new_year_cards=[],
+        new_year_ready_answers={},
     )
 
     # Отправляем введение
@@ -1650,6 +1651,56 @@ async def btn_new_year_reading(message: Message, state: FSMContext) -> None:
             ]
         ),
     )
+    
+    # Запускаем фоновую генерацию первого вопроса
+    bot = get_bot()
+    asyncio.create_task(_generate_next_question_background(
+        user_id,
+        0,
+        state,
+        bot,
+    ))
+
+
+async def _generate_next_question_background(
+    user_id: int,
+    next_question_index: int,
+    state: FSMContext,
+    bot,
+) -> None:
+    """Фоновая генерация следующего вопроса новогоднего расклада."""
+    if next_question_index >= len(NEW_YEAR_QUESTIONS):
+        return
+
+    question_data = NEW_YEAR_QUESTIONS[next_question_index]
+    
+    # Выбираем случайную карту
+    if len(CARDS) < 1:
+        return
+
+    selected_card = random.choice(CARDS)
+    
+    # Генерируем трактовку
+    try:
+        interpretation = await generate_new_year_reading(
+            selected_card,
+            question_data,
+            next_question_index + 1,
+            len(NEW_YEAR_QUESTIONS),
+        )
+        
+        # Сохраняем готовый результат в state (только название карты, не объект)
+        data = await state.get_data()
+        ready_answers = data.get("new_year_ready_answers", {})
+        ready_answers[next_question_index] = {
+            "card_title": selected_card.title,
+            "interpretation": interpretation,
+        }
+        await state.update_data(new_year_ready_answers=ready_answers)
+        
+        logger.info("Фоновая генерация вопроса %d завершена для пользователя %d", next_question_index + 1, user_id)
+    except Exception as exc:
+        logger.exception("Ошибка при фоновой генерации вопроса %d для пользователя %d: %s", next_question_index + 1, user_id, exc)
 
 
 @router.callback_query(F.data == "new_year_draw_card")
@@ -1676,16 +1727,52 @@ async def cb_new_year_draw_card(cb: CallbackQuery, state: FSMContext) -> None:
         return
 
     question_data = NEW_YEAR_QUESTIONS[question_index]
+    ready_answers = data.get("new_year_ready_answers", {})
     
-    # Выбираем случайную карту
-    if len(CARDS) < 1:
-        await cb.answer("Недостаточно карт для расклада.")
-        await state.clear()
-        return
+    # Проверяем, есть ли уже готовая трактовка для этого вопроса
+    if question_index in ready_answers:
+        # Используем готовую трактовку
+        ready_answer = ready_answers[question_index]
+        card_title = ready_answer["card_title"]
+        interpretation = ready_answer["interpretation"]
+        
+        # Находим объект карты по названию
+        selected_card = next((c for c in CARDS if c.title == card_title), None)
+        if not selected_card:
+            # Если карта не найдена, выбираем случайную
+            selected_card = random.choice(CARDS)
+        
+        # Удаляем использованный ответ из кэша
+        del ready_answers[question_index]
+        await state.update_data(new_year_ready_answers=ready_answers)
+        
+        await cb.answer()
+    else:
+        # Генерируем трактовку на лету (если не была подготовлена заранее)
+        if len(CARDS) < 1:
+            await cb.answer("Недостаточно карт для расклада.")
+            await state.clear()
+            return
 
-    selected_card = random.choice(CARDS)
-    
-    # Сохраняем карту
+        selected_card = random.choice(CARDS)
+        
+        await cb.answer()
+        await cb.message.answer("Колода тасуется... Подожди несколько секунд ✨")
+
+        try:
+            interpretation = await generate_new_year_reading(
+                selected_card,
+                question_data,
+                question_index + 1,
+                len(NEW_YEAR_QUESTIONS),
+            )
+        except Exception as exc:
+            logger.exception("Ошибка при обращении к LLM для новогоднего расклада: %s", exc)
+            await cb.message.answer("Не удалось получить трактовку. Попробуй чуть позже.")
+            await state.clear()
+            return
+
+    # Сохраняем карту в список
     cards_list = data.get("new_year_cards", [])
     cards_list.append(selected_card.title)
     await state.update_data(new_year_cards=cards_list)
@@ -1697,23 +1784,6 @@ async def cb_new_year_draw_card(cb: CallbackQuery, state: FSMContext) -> None:
             db_user.draw_count = (db_user.draw_count or 0) + 1
             db_user.last_activity_date = date.today()
             session.commit()
-
-    await cb.answer()
-    await cb.message.answer("Колода тасуется... Подожди несколько секунд ✨")
-
-    # Генерируем трактовку
-    try:
-        interpretation = await generate_new_year_reading(
-            selected_card,
-            question_data,
-            question_index + 1,
-            len(NEW_YEAR_QUESTIONS),
-        )
-    except Exception as exc:
-        logger.exception("Ошибка при обращении к LLM для новогоднего расклада: %s", exc)
-        await cb.message.answer("Не удалось получить трактовку. Попробуй чуть позже.")
-        await state.clear()
-        return
 
     # Отправляем карту
     sent = False
@@ -1770,6 +1840,15 @@ async def cb_new_year_draw_card(cb: CallbackQuery, state: FSMContext) -> None:
                 ]
             ),
         )
+        
+        # Запускаем фоновую генерацию следующего вопроса
+        bot = get_bot()
+        asyncio.create_task(_generate_next_question_background(
+            user.id,
+            question_index,
+            state,
+            bot,
+        ))
     else:
         # Последний вопрос завершён
         await state.clear()
