@@ -95,3 +95,4 @@ async def generate_new_year_reading(card: Card, question_data: dict[str, str], q
     return await ask_llm(prompt)
 
 
+

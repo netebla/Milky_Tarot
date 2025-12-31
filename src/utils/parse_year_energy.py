@@ -53,16 +53,14 @@ CARD_NAME_MAPPING = {
 
 def extract_card_name(text: str) -> str | None:
     """Извлекает название карты из строки вида '1 Архетип — Маг 🧚‍♀️'."""
-    # Сначала проверяем многословные названия
-    multi_word_cards = [
-        "Верховная Жрица",
-        "Колесо Фортуны",
-        "Повешенный",
-    ]
-    
-    for card_name in multi_word_cards:
-        if card_name in text:
-            return CARD_NAME_MAPPING.get(card_name, card_name)
+    # Сначала проверяем многословные названия (нечувствительно к регистру)
+    text_lower = text.lower()
+    if "верховная" in text_lower and "жрица" in text_lower:
+        return "Верховная Жрица"
+    if "колесо" in text_lower and ("фортуны" in text_lower or "фортун" in text_lower):
+        return "Колесо Фортуны"
+    if "повешенный" in text_lower or "повешенны" in text_lower:
+        return "Повешенный"
     
     # Убираем эмодзи и специальные символы, но сохраняем пробелы для многословных названий
     text_clean = re.sub(r'[^\w\s—\-]', '', text)
@@ -71,12 +69,13 @@ def extract_card_name(text: str) -> str | None:
     match = re.search(r'Архетип\s*—\s*([А-Яа-яЁё\s]+)', text_clean)
     if match:
         card_name = match.group(1).strip()
-        # Проверяем многословные варианты
-        if "Колесо" in card_name and "Фортуны" in card_name:
+        card_name_lower = card_name.lower()
+        # Проверяем многословные варианты (нечувствительно к регистру)
+        if "колесо" in card_name_lower and ("фортуны" in card_name_lower or "фортун" in card_name_lower):
             return "Колесо Фортуны"
-        if "Верховная" in card_name and "Жрица" in card_name:
+        if "верховная" in card_name_lower and "жрица" in card_name_lower:
             return "Верховная Жрица"
-        if "Повешенный" in card_name:
+        if "повешенный" in card_name_lower or "повешенны" in card_name_lower:
             return "Повешенный"
         # Берем первое слово для однозначных карт
         first_word = card_name.split()[0] if card_name.split() else card_name
@@ -86,12 +85,13 @@ def extract_card_name(text: str) -> str | None:
     match = re.search(r'\d+\s+Архетип\s*—\s*([А-Яа-яЁё\s]+)', text_clean)
     if match:
         card_name = match.group(1).strip()
-        # Проверяем многословные варианты
-        if "Колесо" in card_name and "Фортуны" in card_name:
+        card_name_lower = card_name.lower()
+        # Проверяем многословные варианты (нечувствительно к регистру)
+        if "колесо" in card_name_lower and ("фортуны" in card_name_lower or "фортун" in card_name_lower):
             return "Колесо Фортуны"
-        if "Верховная" in card_name and "Жрица" in card_name:
+        if "верховная" in card_name_lower and "жрица" in card_name_lower:
             return "Верховная Жрица"
-        if "Повешенный" in card_name:
+        if "повешенный" in card_name_lower or "повешенны" in card_name_lower:
             return "Повешенный"
         first_word = card_name.split()[0] if card_name.split() else card_name
         return CARD_NAME_MAPPING.get(first_word, first_word)
@@ -109,62 +109,89 @@ def parse_year_energy_docx(docx_path: str | Path, output_csv_path: str | Path) -
     Парсит docx файл с данными расклада 'Энергия года' и сохраняет в CSV.
     
     Ожидаемый формат docx:
-    - Название архетипа (название карты)
-    - Описание/трактовка
+    - Строка с номером и названием архетипа (например, "1 Архетип — Маг 🧚‍♀️")
+    - Строка с описанием года, заканчивающаяся на "Небольшие подсказки:"
+    - Несколько строк с советами (каждый совет на отдельной строке)
+    - Пустая строка перед следующим архетипом
     """
     doc = Document(docx_path)
     
+    paragraphs = [p.text for p in doc.paragraphs]
     archetypes = []
-    current_archetype = None
-    current_text = []
     
-    for para in doc.paragraphs:
-        text = para.text.strip()
-        if not text:
-            continue
+    i = 0
+    while i < len(paragraphs):
+        text = paragraphs[i].strip()
         
-        # Пытаемся извлечь название карты
+        # Пытаемся найти начало нового архетипа
         card_name = extract_card_name(text)
         
         if card_name:
-            # Сохраняем предыдущий архетип, если есть
-            if current_archetype and current_text:
+            # Нашли новый архетип
+            # Следующая строка должна содержать описание и "Небольшие подсказки:"
+            if i + 1 < len(paragraphs):
+                description_line = paragraphs[i + 1].strip()
+                
+                # Разделяем описание и "Небольшие подсказки:"
+                if "Небольшие подсказки:" in description_line:
+                    # Описание - это всё до "Небольшие подсказки:"
+                    description = description_line.split("Небольшие подсказки:")[0].strip()
+                    tips_header = "Небольшие подсказки:"
+                else:
+                    # Если "Небольшие подсказки:" не найдено, берём всю строку как описание
+                    description = description_line
+                    tips_header = ""
+                
+                # Собираем советы (строки после описания до пустой строки или следующего архетипа)
+                tips = []
+                j = i + 2  # Начинаем со строки после описания
+                
+                while j < len(paragraphs):
+                    tip_text = paragraphs[j].strip()
+                    
+                    # Если пустая строка или начало нового архетипа - заканчиваем сбор советов
+                    if not tip_text:
+                        break
+                    if extract_card_name(tip_text):
+                        break
+                    
+                    # Если это не пустая строка и не новый архетип - это совет
+                    if tip_text:
+                        tips.append(tip_text)
+                    
+                    j += 1
+                
+                # Формируем итоговое описание
+                full_description = description
+                
+                if tips_header and tips:
+                    # Добавляем заголовок "Небольшие подсказки:" и список советов
+                    full_description += "\n" + tips_header + "\n"
+                    # Форматируем советы с маркерами
+                    formatted_tips = "\n".join([f"•\t{tip}" for tip in tips])
+                    full_description += formatted_tips
+                elif tips:
+                    # Если нет заголовка, но есть советы, добавляем их
+                    formatted_tips = "\n".join([f"•\t{tip}" for tip in tips])
+                    full_description += "\n" + formatted_tips
+                
                 archetypes.append({
-                    'card_name': current_archetype,
-                    'description': '\n'.join(current_text).strip()
+                    'card_name': card_name,
+                    'description': full_description.strip()
                 })
-            
-            # Начинаем новый архетип
-            current_archetype = card_name
-            current_text = []
-            # Убираем строку с названием из описания
-            continue
-        else:
-            # Это часть описания
-            if current_archetype:
-                current_text.append(text)
+                
+                # Переходим к следующему архетипу (пропускаем обработанные строки)
+                i = j
             else:
-                # Если нет текущего архетипа, возможно это первый архетип без явного названия
-                # Пытаемся найти название в тексте
-                card_name = extract_card_name(text)
-                if card_name:
-                    current_archetype = card_name
-                    # Убираем название из текста
-                    text_without_name = re.sub(r'\d+\s+Архетип\s*—\s*\w+[^\w\s]*', '', text).strip()
-                    if text_without_name:
-                        current_text = [text_without_name]
-                    else:
-                        current_text = []
-                elif not archetypes:
-                    # Первый параграф без названия - пропускаем или используем как заголовок
-                    continue
-    
-    # Сохраняем последний архетип
-    if current_archetype and current_text:
-        archetypes.append({
-            'card_name': current_archetype,
-            'description': '\n'.join(current_text).strip()
-        })
+                # Если нет следующей строки, просто сохраняем архетип без описания
+                archetypes.append({
+                    'card_name': card_name,
+                    'description': ''
+                })
+                i += 1
+        else:
+            # Если не нашли архетип, просто переходим к следующей строке
+            i += 1
     
     # Убираем дубликаты (оставляем первый)
     seen = set()
