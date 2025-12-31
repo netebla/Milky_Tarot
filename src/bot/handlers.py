@@ -130,6 +130,90 @@ def _get_or_create_user(session: Session, user_id: int, username: str | None) ->
     return user
 
 
+def _choose_year_energy_card(user_id: int, archetypes: dict[str, str]) -> tuple[str, bool]:
+    """
+    Выбирает карту для расклада "Энергия года".
+    
+    Если у пользователя уже есть сохраненная карта, возвращает её.
+    Иначе выбирает случайную карту и сохраняет её в БД.
+    
+    Returns:
+        tuple[название_карты, была_ли_карта_уже_сохранена]
+    """
+    with SessionLocal() as session:
+        db_user = _get_or_create_user(session, user_id, None)
+        
+        # Если карта уже сохранена, возвращаем её
+        if db_user.year_energy_card and db_user.year_energy_card in archetypes:
+            return db_user.year_energy_card, True
+        
+        # Иначе выбираем случайную карту из доступных архетипов
+        available_cards = [card for card in CARDS if card.title in archetypes]
+        if not available_cards:
+            raise ValueError("Не найдено карт для расклада.")
+        
+        selected_card = random.choice(available_cards)
+        card_title = selected_card.title
+        
+        # Сохраняем выбранную карту
+        db_user.year_energy_card = card_title
+        session.commit()
+        
+        return card_title, False
+
+
+async def _send_card_image(message_or_cb: Message | CallbackQuery, card_title: str) -> bool:
+    """
+    Отправляет изображение карты.
+    
+    Returns:
+        True если изображение было успешно отправлено, False иначе
+    """
+    # Находим карту по названию
+    selected_card = next((card for card in CARDS if card.title == card_title), None)
+    if not selected_card:
+        return False
+    
+    # Определяем объект для отправки сообщения
+    if isinstance(message_or_cb, CallbackQuery):
+        send_func = message_or_cb.message.answer_photo
+    else:
+        send_func = message_or_cb.answer_photo
+    
+    # Пытаемся отправить локальное изображение
+    local_path = getattr(selected_card, "image_path", None)
+    if callable(local_path):
+        path = local_path()
+        if path.exists():
+            try:
+                await send_func(
+                    photo=BufferedInputFile(path.read_bytes(), filename=path.name),
+                    caption=selected_card.title,
+                )
+                return True
+            except TelegramBadRequest:
+                pass
+    
+    # Пытаемся загрузить изображение по URL
+    try:
+        image_bytes = await _fetch_image_bytes(selected_card.image_url())
+        await send_func(
+            photo=BufferedInputFile(image_bytes, filename=f"{selected_card.title}.jpg"),
+            caption=selected_card.title,
+        )
+        return True
+    except (httpx.HTTPError, TelegramBadRequest, TelegramNetworkError):
+        pass
+    
+    # Если не удалось отправить изображение, отправляем только название
+    if isinstance(message_or_cb, CallbackQuery):
+        await message_or_cb.message.answer(selected_card.title)
+    else:
+        await message_or_cb.answer(selected_card.title)
+    
+    return False
+
+
 async def _start_three_cards_flow(message: Message, state: FSMContext) -> None:
     if len(CARDS) < 3:
         await message.answer("Недостаточно карт для расклада.")
@@ -1013,69 +1097,44 @@ async def cb_admin_push_year_energy(cb: CallbackQuery, state: FSMContext) -> Non
         await cb.message.answer("К сожалению, данные для расклада временно недоступны.")
         return
 
-    # Выбираем случайную карту из доступных архетипов
-    available_cards = [card for card in CARDS if card.title in archetypes]
-    if not available_cards:
-        await cb.message.answer("Не найдено карт для расклада.")
-        return
+    try:
+        # Выбираем карту (или получаем сохраненную)
+        card_title, was_saved = _choose_year_energy_card(user.id, archetypes)
+        archetype_description = archetypes[card_title]
 
-    selected_card = random.choice(available_cards)
-    archetype_description = archetypes[selected_card.title]
+        # Отправляем карту
+        await _send_card_image(cb, card_title)
 
-    # Отправляем карту
-    sent = False
-    local_path = getattr(selected_card, "image_path", None)
-    if callable(local_path):
-        path = local_path()
-        if path.exists():
-            try:
-                await cb.message.answer_photo(
-                    photo=BufferedInputFile(path.read_bytes(), filename=path.name),
-                    caption=selected_card.title,
-                )
-                sent = True
-            except TelegramBadRequest:
-                sent = False
-    if not sent:
-        try:
-            image_bytes = await _fetch_image_bytes(selected_card.image_url())
-            await cb.message.answer_photo(
-                photo=BufferedInputFile(image_bytes, filename=f"{selected_card.title}.jpg"),
-                caption=selected_card.title,
-            )
-            sent = True
-        except (httpx.HTTPError, TelegramBadRequest, TelegramNetworkError):
-            sent = False
-    if not sent:
-        await cb.message.answer(selected_card.title)
+        # Отправляем трактовку архетипа
+        await cb.message.answer(
+            f"✨ Энергия года: {card_title} ✨\n\n{archetype_description}"
+        )
 
-    # Отправляем трактовку архетипа
-    await cb.message.answer(
-        f"✨ Энергия года: {selected_card.title} ✨\n\n{archetype_description}"
-    )
-
-    # Отправляем сообщение с предложением платного расклада
-    await cb.message.answer(
-        "Отлично, Архетип года пойман. 😈\n"
-        "Хочешь разобрать его глубже? Могу сделать подробный расклад на год: где будет рост, где проверка, что станет твоей опорой и какой шанс важно не пропустить.",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Разобрать глубже (101 🐟)",
-                        callback_data="year_energy_deep_reading",
-                    )
+        # Отправляем сообщение с предложением платного расклада
+        await cb.message.answer(
+            "Отлично, Архетип года пойман. 😈\n"
+            "Хочешь разобрать его глубже? Могу сделать подробный расклад на год: где будет рост, где проверка, что станет твоей опорой и какой шанс важно не пропустить.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Разобрать глубже (101 🐟)",
+                            callback_data="year_energy_deep_reading",
+                        )
+                    ]
                 ]
-            ]
-        ),
-    )
+            ),
+        )
 
-    # Обновляем статистику
-    with SessionLocal() as session:
-        db_user = _get_or_create_user(session, user.id, user.username)
-        db_user.draw_count = (db_user.draw_count or 0) + 1
-        db_user.last_activity_date = date.today()
-        session.commit()
+        # Обновляем статистику (только если карта была выбрана впервые)
+        if not was_saved:
+            with SessionLocal() as session:
+                db_user = _get_or_create_user(session, user.id, user.username)
+                db_user.draw_count = (db_user.draw_count or 0) + 1
+                db_user.last_activity_date = date.today()
+                session.commit()
+    except ValueError as e:
+        await cb.message.answer(str(e))
 
 
 class AdviceCard:
@@ -2114,7 +2173,7 @@ async def btn_year_energy(message: Message, state: FSMContext) -> None:
     Обработчик кнопки 'Энергия года'.
     
     Выполняет бесплатный расклад:
-    1. Выбирает случайную карту из доступных архетипов
+    1. Выбирает карту из доступных архетипов (или возвращает сохраненную)
     2. Отправляет изображение карты
     3. Отправляет трактовку архетипа года
     4. Предлагает перейти к платному раскладу "Итоги года"
@@ -2136,69 +2195,44 @@ async def btn_year_energy(message: Message, state: FSMContext) -> None:
         await message.answer("К сожалению, данные для расклада временно недоступны.")
         return
     
-    # Выбираем случайную карту из доступных архетипов
-    available_cards = [card for card in CARDS if card.title in archetypes]
-    if not available_cards:
-        await message.answer("Не найдено карт для расклада.")
-        return
-    
-    selected_card = random.choice(available_cards)
-    archetype_description = archetypes[selected_card.title]
-    
-    # Отправляем карту
-    sent = False
-    local_path = getattr(selected_card, "image_path", None)
-    if callable(local_path):
-        path = local_path()
-        if path.exists():
-            try:
-                await message.answer_photo(
-                    photo=BufferedInputFile(path.read_bytes(), filename=path.name),
-                    caption=selected_card.title,
-                )
-                sent = True
-            except TelegramBadRequest:
-                sent = False
-    if not sent:
-        try:
-            image_bytes = await _fetch_image_bytes(selected_card.image_url())
-            await message.answer_photo(
-                photo=BufferedInputFile(image_bytes, filename=f"{selected_card.title}.jpg"),
-                caption=selected_card.title,
-            )
-            sent = True
-        except (httpx.HTTPError, TelegramBadRequest, TelegramNetworkError):
-            sent = False
-    if not sent:
-        await message.answer(selected_card.title)
-    
-    # Отправляем трактовку архетипа
-    await message.answer(
-        f"✨ Энергия года: {selected_card.title} ✨\n\n{archetype_description}"
-    )
-    
-    # Отправляем сообщение с предложением платного расклада
-    await message.answer(
-        "Отлично, Архетип года пойман. 😈\n"
-        "Хочешь разобрать его глубже? Могу сделать подробный расклад на год: где будет рост, где проверка, что станет твоей опорой и какой шанс важно не пропустить.",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Разобрать глубже (101 🐟)",
-                        callback_data="year_energy_deep_reading",
-                    )
+    try:
+        # Выбираем карту (или получаем сохраненную)
+        card_title, was_saved = _choose_year_energy_card(user.id, archetypes)
+        archetype_description = archetypes[card_title]
+        
+        # Отправляем карту
+        await _send_card_image(message, card_title)
+        
+        # Отправляем трактовку архетипа
+        await message.answer(
+            f"✨ Энергия года: {card_title} ✨\n\n{archetype_description}"
+        )
+        
+        # Отправляем сообщение с предложением платного расклада
+        await message.answer(
+            "Отлично, Архетип года пойман. 😈\n"
+            "Хочешь разобрать его глубже? Могу сделать подробный расклад на год: где будет рост, где проверка, что станет твоей опорой и какой шанс важно не пропустить.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Разобрать глубже (101 🐟)",
+                            callback_data="year_energy_deep_reading",
+                        )
+                    ]
                 ]
-            ]
-        ),
-    )
-    
-    # Обновляем статистику
-    with SessionLocal() as session:
-        db_user = _get_or_create_user(session, user.id, user.username)
-        db_user.draw_count = (db_user.draw_count or 0) + 1
-        db_user.last_activity_date = date.today()
-        session.commit()
+            ),
+        )
+        
+        # Обновляем статистику (только если карта была выбрана впервые)
+        if not was_saved:
+            with SessionLocal() as session:
+                db_user = _get_or_create_user(session, user.id, user.username)
+                db_user.draw_count = (db_user.draw_count or 0) + 1
+                db_user.last_activity_date = date.today()
+                session.commit()
+    except ValueError as e:
+        await message.answer(str(e))
 
 
 @router.callback_query(F.data == "year_energy_deep_reading")

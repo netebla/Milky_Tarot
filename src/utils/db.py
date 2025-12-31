@@ -38,6 +38,8 @@ class User(Base):
     # Использование премиального расклада "Три ключа"
     three_keys_last_date = Column(Date, nullable=True)
     three_keys_daily_count = Column(Integer, default=0)
+    # Карта для расклада "Энергия года" (сохраняется один раз на год)
+    year_energy_card = Column(String, nullable=True)
 
 
 class Payment(Base):
