@@ -7,14 +7,14 @@ def main_menu_kb(show_admin_features: bool = False) -> ReplyKeyboardMarkup:
         [KeyboardButton(text="Узнать совет карт")],
     ]
 
-    # Премиальный расклад и баланс доступны всем пользователям
+    # Премиальный расклад, баланс и Энергия года доступны всем пользователям
     keyboard.append([KeyboardButton(text="Задать свой вопрос")])
     keyboard.append([KeyboardButton(text="Мои рыбки")])
+    keyboard.append([KeyboardButton(text="Энергия года")])
 
-    # Новогодний расклад и Энергия года только для админов
+    # Новогодний расклад только для админов
     if show_admin_features:
         keyboard.append([KeyboardButton(text="Новогодний расклад 2026")])
-        keyboard.append([KeyboardButton(text="Энергия года")])
 
     keyboard.append([KeyboardButton(text="Мои настройки"), KeyboardButton(text="Помощь")])
 

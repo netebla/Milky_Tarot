@@ -2157,7 +2157,7 @@ async def cb_new_year_buy_fish(cb: CallbackQuery, state: FSMContext) -> None:
     await cb.answer()
 
 
-# -------- Расклад "Энергия года" (бесплатный, только для админов) --------
+# -------- Расклад "Энергия года" (бесплатный, общедоступный) --------
 #
 # Расклад позволяет получить архетип года - случайную карту старших арканов
 # с трактовкой того, какая энергия будет преобладать в году.
@@ -2166,6 +2166,9 @@ async def cb_new_year_buy_fish(cb: CallbackQuery, state: FSMContext) -> None:
 #
 # Данные архетипов загружаются из CSV файла year_energy_archetypes.csv,
 # который создаётся парсером parse_year_energy.py из docx файла.
+#
+# Важно: карта выбирается один раз и сохраняется в БД (поле year_energy_card),
+# чтобы пользователь всегда получал одну и ту же карту при повторных запросах.
 
 @router.message(F.text == "Энергия года")
 async def btn_year_energy(message: Message, state: FSMContext) -> None:
@@ -2178,15 +2181,11 @@ async def btn_year_energy(message: Message, state: FSMContext) -> None:
     3. Отправляет трактовку архетипа года
     4. Предлагает перейти к платному раскладу "Итоги года"
     
-    Доступен только администраторам.
+    Доступен всем пользователям.
+    Карта выбирается один раз и сохраняется в БД для единственности.
     """
     user = message.from_user
     if not user:
-        return
-    
-    # Проверяем, что пользователь - админ
-    if not _is_admin(user.id):
-        await message.answer("Эта функция доступна только администраторам.")
         return
     
     # Загружаем архетипы
@@ -2244,16 +2243,11 @@ async def cb_year_energy_deep_reading(cb: CallbackQuery, state: FSMContext) -> N
     новогодний расклад с 13 вопросами, если баланс достаточен.
     Если баланса недостаточно, предлагает пополнить его.
     
-    Доступен только администраторам.
+    Доступен всем пользователям.
     """
     user = cb.from_user
     if not user:
         await cb.answer()
-        return
-    
-    # Проверяем, что пользователь - админ
-    if not _is_admin(user.id):
-        await cb.answer("Эта функция доступна только администраторам.")
         return
     
     await cb.answer()
