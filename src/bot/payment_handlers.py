@@ -31,6 +31,10 @@ from utils.yookassa_client import create_payment, get_payment, YooKassaError
 
 logger = logging.getLogger(__name__)
 
+# Определяем путь к изображениям относительно этого файла
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+IMAGES_DIR = DATA_DIR / "images"
+
 router = Router()
 
 
@@ -139,11 +143,16 @@ async def _auto_check_payment(bot: Bot, payment_db_id: int, user_id: int) -> Non
             if not payment:
                 return
 
+            # КРИТИЧЕСКИ ВАЖНО: Проверяем, что платеж еще не был обработан
+            # Это предотвращает двойное начисление при race condition
+            # Проверяем ДО обновления статуса
+            was_already_processed = payment.status == "succeeded"
+            
             payment.status = status or payment.status
             payment.method = method_type or payment.method
             payment.updated_at = datetime.utcnow()
 
-            if status == "succeeded" and paid:
+            if status == "succeeded" and paid and not was_already_processed:
                 user_obj = session.query(User).filter(User.id == user_id).first()
                 if not user_obj:
                     user_obj = User(id=user_id)
@@ -151,6 +160,8 @@ async def _auto_check_payment(bot: Bot, payment_db_id: int, user_id: int) -> Non
 
                 current_balance = getattr(user_obj, "fish_balance", 0) or 0
                 user_obj.fish_balance = current_balance + payment.fish_amount
+                # Обновляем статус платежа перед commit, чтобы предотвратить повторное начисление
+                payment.status = "succeeded"
                 session.commit()
                 new_balance = user_obj.fish_balance
 
@@ -160,6 +171,25 @@ async def _auto_check_payment(bot: Bot, payment_db_id: int, user_id: int) -> Non
                     f"Твой новый баланс: {new_balance} 🐟",
                 ]
                 await bot.send_message(chat_id=user_id, text="\n".join(text_lines))
+                
+                # Отправляем изображение сытой милки
+                fed_text = (
+                    "Спасибо за рыбки!💖💖💖\n"
+                    "Теперь я снова в порядке — сытая, собранная и готовая продолжать 😻"
+                )
+                fed_path = IMAGES_DIR / "fed_milky.jpg"
+                if fed_path.exists():
+                    try:
+                        await bot.send_photo(
+                            chat_id=user_id,
+                            photo=BufferedInputFile(fed_path.read_bytes(), filename=fed_path.name),
+                            caption=fed_text,
+                        )
+                    except TelegramBadRequest:
+                        await bot.send_message(chat_id=user_id, text=fed_text)
+                else:
+                    logger.warning("Файл fed_milky.jpg не найден по пути: %s", fed_path)
+                    await bot.send_message(chat_id=user_id, text=fed_text)
                 return
 
             session.commit()
@@ -373,11 +403,16 @@ async def cb_check_payment(cb: CallbackQuery) -> None:
             await cb.message.answer("Платёж не найден. Напиши, пожалуйста, администратору.")
             return
 
+        # КРИТИЧЕСКИ ВАЖНО: Проверяем, что платеж еще не был обработан
+        # Это предотвращает двойное начисление при race condition
+        # Проверяем ДО обновления статуса
+        was_already_processed = payment.status == "succeeded"
+        
         payment.status = status or payment.status
         payment.method = method_type or payment.method
         payment.updated_at = datetime.utcnow()
 
-        if status == "succeeded" and paid:
+        if status == "succeeded" and paid and not was_already_processed:
                 # Начисляем рыбки пользователю один раз
                 user_obj = session.query(User).filter(User.id == user.id).first()
                 if not user_obj:
@@ -386,7 +421,8 @@ async def cb_check_payment(cb: CallbackQuery) -> None:
 
                 current_balance = getattr(user_obj, "fish_balance", 0) or 0
                 user_obj.fish_balance = current_balance + payment.fish_amount
-
+                # Обновляем статус платежа перед commit, чтобы предотвратить повторное начисление
+                payment.status = "succeeded"
                 session.commit()
                 new_balance = user_obj.fish_balance
 
@@ -404,7 +440,7 @@ async def cb_check_payment(cb: CallbackQuery) -> None:
                     "Спасибо за рыбки!💖💖💖\n"
                     "Теперь я снова в порядке — сытая, собранная и готовая продолжать 😻"
                 )
-                fed_path = Path("src/data/images/fed_milky.jpg")
+                fed_path = IMAGES_DIR / "fed_milky.jpg"
                 if fed_path.exists():
                     try:
                         await cb.message.answer_photo(
@@ -412,8 +448,10 @@ async def cb_check_payment(cb: CallbackQuery) -> None:
                             caption=fed_text,
                         )
                     except TelegramBadRequest:
+                        logger.warning("Не удалось отправить фото fed_milky.jpg через answer_photo, отправляем текст")
                         await cb.message.answer(fed_text)
                 else:
+                    logger.warning("Файл fed_milky.jpg не найден по пути: %s", fed_path)
                     await cb.message.answer(fed_text)
                 return
 

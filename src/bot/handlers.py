@@ -1977,7 +1977,7 @@ async def _generate_next_question_background(
 async def cb_new_year_draw_card(cb: CallbackQuery, state: FSMContext) -> None:
     """Обработчик вытягивания карты для текущего вопроса новогоднего расклада."""
     user = cb.from_user
-    if not user or not _is_admin(user.id):
+    if not user:
         await cb.answer()
         return
 
