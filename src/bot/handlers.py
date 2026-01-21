@@ -15,7 +15,7 @@ import httpx
 import pytz
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
@@ -214,6 +214,52 @@ async def _send_card_image(message_or_cb: Message | CallbackQuery, card_title: s
     return False
 
 
+async def _run_year_energy_reading(message: Message, state: FSMContext) -> None:
+    """Общий сценарий выдачи бесплатного расклада «Энергия года»."""
+    await state.clear()
+
+    user = message.from_user
+    if not user:
+        return
+
+    archetypes = load_year_energy_archetypes()
+    if not archetypes:
+        await message.answer("К сожалению, данные для расклада временно недоступны.")
+        return
+
+    try:
+        card_title, was_saved = _choose_year_energy_card(user.id, archetypes)
+        archetype_description = archetypes[card_title]
+
+        await _send_card_image(message, card_title)
+
+        await message.answer(f"✨ Энергия года: {card_title} ✨\n\n{archetype_description}")
+
+        await message.answer(
+            "Отлично, Архетип года пойман. 😈\n"
+            "Хочешь разобрать его глубже? Могу сделать подробный расклад на год: где будет рост, где проверка, что станет твоей опорой и какой шанс важно не пропустить.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Разобрать глубже (101 🐟)",
+                            callback_data="year_energy_deep_reading",
+                        )
+                    ]
+                ]
+            ),
+        )
+
+        if not was_saved:
+            with SessionLocal() as session:
+                db_user = _get_or_create_user(session, user.id, user.username)
+                db_user.draw_count = (db_user.draw_count or 0) + 1
+                db_user.last_activity_date = date.today()
+                session.commit()
+    except ValueError as e:
+        await message.answer(str(e))
+
+
 async def _start_three_cards_flow(message: Message, state: FSMContext) -> None:
     if len(CARDS) < 3:
         await message.answer("Недостаточно карт для расклада.")
@@ -233,6 +279,15 @@ async def _start_three_cards_flow(message: Message, state: FSMContext) -> None:
     selected_cards = random.sample(CARDS, 3)
     await state.set_state(ThreeCardsStates.waiting_context)
     await state.update_data(three_cards=[card.title for card in selected_cards])
+
+
+@router.message(StateFilter("*"), F.text == "Энергия года")
+async def btn_year_energy(message: Message, state: FSMContext) -> None:
+    """
+    Обработчик кнопки 'Энергия года' доступный из любого состояния.
+    Позволяет прервать предыдущие сценарии и сразу выдать бесплатный расклад.
+    """
+    await _run_year_energy_reading(message, state)
 
 
 async def _send_card_of_the_day(message: Message, user_id: int) -> None:
@@ -2170,68 +2225,7 @@ async def cb_new_year_buy_fish(cb: CallbackQuery, state: FSMContext) -> None:
 # Важно: карта выбирается один раз и сохраняется в БД (поле year_energy_card),
 # чтобы пользователь всегда получал одну и ту же карту при повторных запросах.
 
-@router.message(F.text == "Энергия года")
-async def btn_year_energy(message: Message, state: FSMContext) -> None:
-    """
-    Обработчик кнопки 'Энергия года'.
-    
-    Выполняет бесплатный расклад:
-    1. Выбирает карту из доступных архетипов (или возвращает сохраненную)
-    2. Отправляет изображение карты
-    3. Отправляет трактовку архетипа года
-    4. Предлагает перейти к платному раскладу "Итоги года"
-    
-    Доступен всем пользователям.
-    Карта выбирается один раз и сохраняется в БД для единственности.
-    """
-    user = message.from_user
-    if not user:
-        return
-    
-    # Загружаем архетипы
-    archetypes = load_year_energy_archetypes()
-    if not archetypes:
-        await message.answer("К сожалению, данные для расклада временно недоступны.")
-        return
-    
-    try:
-        # Выбираем карту (или получаем сохраненную)
-        card_title, was_saved = _choose_year_energy_card(user.id, archetypes)
-        archetype_description = archetypes[card_title]
-        
-        # Отправляем карту
-        await _send_card_image(message, card_title)
-        
-        # Отправляем трактовку архетипа
-        await message.answer(
-            f"✨ Энергия года: {card_title} ✨\n\n{archetype_description}"
-        )
-        
-        # Отправляем сообщение с предложением платного расклада
-        await message.answer(
-            "Отлично, Архетип года пойман. 😈\n"
-            "Хочешь разобрать его глубже? Могу сделать подробный расклад на год: где будет рост, где проверка, что станет твоей опорой и какой шанс важно не пропустить.",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="Разобрать глубже (101 🐟)",
-                            callback_data="year_energy_deep_reading",
-                        )
-                    ]
-                ]
-            ),
-        )
-        
-        # Обновляем статистику (только если карта была выбрана впервые)
-        if not was_saved:
-            with SessionLocal() as session:
-                db_user = _get_or_create_user(session, user.id, user.username)
-                db_user.draw_count = (db_user.draw_count or 0) + 1
-                db_user.last_activity_date = date.today()
-                session.commit()
-    except ValueError as e:
-        await message.answer(str(e))
+# Хендлер перенесён выше и работает из любого состояния.
 
 
 @router.callback_query(F.data == "year_energy_deep_reading")
