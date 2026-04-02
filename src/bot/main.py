@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import signal
+from datetime import datetime, timedelta
 
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
@@ -12,7 +13,7 @@ from aiogram.client.default import DefaultBotProperties
 
 from utils.scheduler import PushScheduler, DEFAULT_PUSH_TIME
 from utils.app_state import set_bot, set_scheduler
-from utils.push import send_push_card
+from utils.push import send_main_menu_refresh_all, send_push_card
 from utils.db import SessionLocal, User
 from .handlers import router as handlers_router
 
@@ -58,6 +59,25 @@ async def on_startup(bot: Bot) -> None:
     set_bot(bot)
     set_scheduler(push_scheduler)
     await reschedule_user_pushes(bot)
+    # Тихо обновляем reply-клавиатуру всем пользователям на следующий день,
+    # чтобы старые пункты меню исчезли из интерфейса клиента.
+    try:
+        hour, minute = map(int, DEFAULT_PUSH_TIME.split(":"))
+        now = datetime.now(push_scheduler.timezone)
+        run_date = (now + timedelta(days=1)).replace(
+            hour=hour,
+            minute=minute,
+            second=0,
+            microsecond=0,
+        )
+        push_scheduler.schedule_once(
+            job_id="main-menu-refresh-all",
+            run_date=run_date,
+            callback=send_main_menu_refresh_all,
+            kwargs={"bot": bot},
+        )
+    except Exception:
+        logger.exception("Не удалось запланировать обновление главного меню")
     logger.info("Бот запущен, планировщик активен, задания восстановлены")
 
 

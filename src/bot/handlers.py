@@ -283,11 +283,13 @@ async def _start_three_cards_flow(message: Message, state: FSMContext) -> None:
 
 @router.message(StateFilter("*"), F.text == "Энергия года")
 async def btn_year_energy(message: Message, state: FSMContext) -> None:
-    """
-    Обработчик кнопки 'Энергия года' доступный из любого состояния.
-    Позволяет прервать предыдущие сценарии и сразу выдать бесплатный расклад.
-    """
-    await _run_year_energy_reading(message, state)
+    """Заглушка: расклад отключён, возвращаем пользователя в главное меню."""
+    await state.clear()
+    user_id = message.from_user.id if message.from_user else None
+    await message.answer(
+        "Расклад «Энергия года» отключён. Возвращаю в главное меню.",
+        reply_markup=main_menu_kb(_is_admin(user_id) if user_id is not None else False),
+    )
 
 
 async def _send_card_of_the_day(message: Message, user_id: int) -> None:
@@ -1138,58 +1140,19 @@ async def cb_admin_push_start_reading(cb: CallbackQuery, state: FSMContext) -> N
 
 @router.callback_query(F.data == "admin_push_year_energy")
 async def cb_admin_push_year_energy(cb: CallbackQuery, state: FSMContext) -> None:
-    """Обработчик кнопки 'Узнать энергию года' из единоразового пуша."""
+    """Заглушка: расклад отключён."""
+    await state.clear()
     user = cb.from_user
-    if not user:
-        await cb.answer()
-        return
-
     await cb.answer()
-
-    # Загружаем архетипы
-    archetypes = load_year_energy_archetypes()
-    if not archetypes:
-        await cb.message.answer("К сожалению, данные для расклада временно недоступны.")
+    user_id = user.id if user else None
+    if user_id is None:
+        await cb.message.answer("Расклад отключён.")
         return
 
-    try:
-        # Выбираем карту (или получаем сохраненную)
-        card_title, was_saved = _choose_year_energy_card(user.id, archetypes)
-        archetype_description = archetypes[card_title]
-
-        # Отправляем карту
-        await _send_card_image(cb, card_title)
-
-        # Отправляем трактовку архетипа
-        await cb.message.answer(
-            f"✨ Энергия года: {card_title} ✨\n\n{archetype_description}"
-        )
-
-        # Отправляем сообщение с предложением платного расклада
-        await cb.message.answer(
-            "Отлично, Архетип года пойман. 😈\n"
-            "Хочешь разобрать его глубже? Могу сделать подробный расклад на год: где будет рост, где проверка, что станет твоей опорой и какой шанс важно не пропустить.",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="Разобрать глубже (101 🐟)",
-                            callback_data="year_energy_deep_reading",
-                        )
-                    ]
-                ]
-            ),
-        )
-
-        # Обновляем статистику (только если карта была выбрана впервые)
-        if not was_saved:
-            with SessionLocal() as session:
-                db_user = _get_or_create_user(session, user.id, user.username)
-                db_user.draw_count = (db_user.draw_count or 0) + 1
-                db_user.last_activity_date = date.today()
-                session.commit()
-    except ValueError as e:
-        await cb.message.answer(str(e))
+    await cb.message.answer(
+        "Расклад «Энергия года» отключён. Возвращаю в главное меню.",
+        reply_markup=main_menu_kb(_is_admin(user_id)),
+    )
 
 
 class AdviceCard:
@@ -1891,100 +1854,18 @@ NEW_YEAR_READING_PRICE = 101
 
 @router.message(F.text == "Новогодний расклад 2026")
 async def btn_new_year_reading(message: Message, state: FSMContext) -> None:
-    """Начало новогоднего расклада."""
+    """Заглушка: расклад отключён."""
+    await state.clear()
     user = message.from_user
     if not user:
         await message.answer("Сначала нажми /start 🚀")
         return
 
     user_id = user.id
-    if not _is_admin(user_id):
-        await message.answer("Этот расклад пока доступен только для админов.")
-        return
-
-    # Проверяем баланс
-    with SessionLocal() as session:
-        db_user = session.query(User).filter(User.id == user_id).first()
-        if not db_user:
-            db_user = User(id=user_id, username=user.username)
-            session.add(db_user)
-            session.commit()
-
-        balance = getattr(db_user, "fish_balance", 0) or 0
-        if balance < NEW_YEAR_READING_PRICE:
-            hungry_path = Path("src/data/images/hungry_milky.jpg")
-            text = (
-                f"Мяу… Для новогоднего расклада нужно {NEW_YEAR_READING_PRICE} рыбок.\n"
-                f"На твоем балансе сейчас {balance} 🐟\n"
-                "Пополни баланс, чтобы начать расклад."
-            )
-            kb_buy_fish = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="Пополнить баланс",
-                            callback_data="new_year_buy_fish",
-                        )
-                    ]
-                ]
-            )
-            if hungry_path.exists():
-                try:
-                    await message.answer_photo(
-                        photo=BufferedInputFile(hungry_path.read_bytes(), filename=hungry_path.name),
-                        caption=text,
-                        reply_markup=kb_buy_fish,
-                    )
-                except TelegramBadRequest:
-                    await message.answer(text, reply_markup=kb_buy_fish)
-            else:
-                await message.answer(text, reply_markup=kb_buy_fish)
-            return
-
-        # Списываем рыбки
-        db_user.fish_balance = balance - NEW_YEAR_READING_PRICE
-        session.commit()
-
-    # Инициализируем расклад
-    await state.set_state(NewYearReadingStates.in_progress)
-    await state.update_data(
-        new_year_question_index=0,
-        new_year_cards=[],
-        new_year_ready_answers={},
-    )
-
-    # Отправляем введение
-    intro_text = (
-        "🎄 Новогодний расклад на 2026 год 🎄\n\n"
-        "Этот расклад поможет тебе понять, что ждёт тебя в новом году. "
-        "Мы пройдём через 13 вопросов, которые охватят все важные сферы твоей жизни.\n\n"
-        "После каждого вопроса ты получишь карту и её трактовку, а затем сможешь перейти к следующему вопросу.\n\n"
-        "Готов начать? Нажми кнопку ниже, чтобы вытянуть первую карту!"
-    )
-
-    await message.answer(intro_text)
     await message.answer(
-        "Вытянуть карту для первого вопроса",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Вытянуть карту",
-                        callback_data="new_year_draw_card",
-                    )
-                ]
-            ]
-        ),
+        "Новогодний расклад 2026 отключён. Возвращаю в главное меню.",
+        reply_markup=main_menu_kb(_is_admin(user_id)),
     )
-    
-    # Запускаем фоновую генерацию первого вопроса
-    bot = get_bot()
-    asyncio.create_task(_generate_next_question_background(
-        user_id,
-        0,
-        state,
-        bot,
-    ))
 
 
 async def _generate_next_question_background(
@@ -2030,186 +1911,34 @@ async def _generate_next_question_background(
 
 @router.callback_query(F.data == "new_year_draw_card")
 async def cb_new_year_draw_card(cb: CallbackQuery, state: FSMContext) -> None:
-    """Обработчик вытягивания карты для текущего вопроса новогоднего расклада."""
+    """Заглушка: расклад отключён."""
+    await state.clear()
     user = cb.from_user
+    await cb.answer()
     if not user:
-        await cb.answer()
+        await cb.message.answer("Расклад отключён.")
         return
 
-    data = await state.get_data()
-    question_index = data.get("new_year_question_index", 0)
-    
-    if question_index >= len(NEW_YEAR_QUESTIONS):
-        await cb.answer("Расклад завершён!")
-        await state.clear()
-        await cb.message.answer(
-            "🎉 Поздравляю! Ты прошёл весь новогодний расклад на 2026 год!\n\n"
-            "Надеюсь, карты помогли тебе лучше понять, что ждёт тебя в новом году. "
-            "Используй эти знания для планирования и принятия решений.\n\n"
-            "Удачи в 2026 году! ✨",
-            reply_markup=main_menu_kb(_is_admin(user.id)),
-        )
-        return
-
-    question_data = NEW_YEAR_QUESTIONS[question_index]
-    ready_answers = data.get("new_year_ready_answers", {})
-    
-    # Проверяем, есть ли уже готовая трактовка для этого вопроса
-    if question_index in ready_answers:
-        # Используем готовую трактовку
-        ready_answer = ready_answers[question_index]
-        card_title = ready_answer["card_title"]
-        interpretation = ready_answer["interpretation"]
-        
-        # Находим объект карты по названию
-        selected_card = next((c for c in CARDS if c.title == card_title), None)
-        if not selected_card:
-            # Если карта не найдена, выбираем случайную
-            selected_card = random.choice(CARDS)
-        
-        # Удаляем использованный ответ из кэша
-        del ready_answers[question_index]
-        await state.update_data(new_year_ready_answers=ready_answers)
-        
-        await cb.answer()
-    else:
-        # Генерируем трактовку на лету (если не была подготовлена заранее)
-        if len(CARDS) < 1:
-            await cb.answer("Недостаточно карт для расклада.")
-            await state.clear()
-            return
-
-        selected_card = random.choice(CARDS)
-        
-        await cb.answer()
-        await cb.message.answer("Колода тасуется... Подожди несколько секунд ✨")
-
-        try:
-            interpretation = await generate_new_year_reading(
-                selected_card,
-                question_data,
-                question_index + 1,
-                len(NEW_YEAR_QUESTIONS),
-            )
-        except Exception as exc:
-            logger.exception("Ошибка при обращении к LLM для новогоднего расклада: %s", exc)
-            await cb.message.answer("Не удалось получить трактовку. Попробуй чуть позже.")
-            await state.clear()
-            return
-
-    # Сохраняем карту в список
-    cards_list = data.get("new_year_cards", [])
-    cards_list.append(selected_card.title)
-    await state.update_data(new_year_cards=cards_list)
-
-    # Обновляем счетчик вытянутых карт в БД
-    with SessionLocal() as session:
-        db_user = session.query(User).filter(User.id == user.id).first()
-        if db_user:
-            db_user.draw_count = (db_user.draw_count or 0) + 1
-            db_user.last_activity_date = date.today()
-            session.commit()
-
-    # Отправляем карту
-    sent = False
-    local_path = getattr(selected_card, "image_path", None)
-    if callable(local_path):
-        path = local_path()
-        if path.exists():
-            try:
-                await cb.message.answer_photo(
-                    photo=BufferedInputFile(path.read_bytes(), filename=path.name),
-                    caption=selected_card.title,
-                )
-                sent = True
-            except TelegramBadRequest:
-                sent = False
-    if not sent:
-        try:
-            image_bytes = await _fetch_image_bytes(selected_card.image_url())
-            await cb.message.answer_photo(
-                photo=BufferedInputFile(image_bytes, filename=f"{selected_card.title}.jpg"),
-                caption=selected_card.title,
-            )
-            sent = True
-        except (httpx.HTTPError, TelegramBadRequest, TelegramNetworkError):
-            sent = False
-    if not sent:
-        await cb.message.answer(selected_card.title)
-
-    # Отправляем трактовку
-    response_text = (
-        f"📋 {question_data['category']}\n"
-        f"❓ {question_data['question']}\n\n"
-        f"{interpretation}"
+    await cb.message.answer(
+        "Расклад отключён. Возвращаю в главное меню.",
+        reply_markup=main_menu_kb(_is_admin(user.id)),
     )
-    await cb.message.answer(response_text)
-
-    # Обновляем индекс вопроса
-    question_index += 1
-    await state.update_data(new_year_question_index=question_index)
-
-    # Если это не последний вопрос, показываем кнопку для следующего
-    if question_index < len(NEW_YEAR_QUESTIONS):
-        next_question = NEW_YEAR_QUESTIONS[question_index]
-        await cb.message.answer(
-            f"Вопрос {question_index + 1} из {len(NEW_YEAR_QUESTIONS)}: {next_question['category']}",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="Вытянуть карту для следующего вопроса",
-                            callback_data="new_year_draw_card",
-                        )
-                    ]
-                ]
-            ),
-        )
-        
-        # Запускаем фоновую генерацию следующего вопроса
-        bot = get_bot()
-        asyncio.create_task(_generate_next_question_background(
-            user.id,
-            question_index,
-            state,
-            bot,
-        ))
-    else:
-        # Последний вопрос завершён
-        await state.clear()
-        await cb.message.answer(
-            "🎉 Поздравляю! Ты прошёл весь новогодний расклад на 2026 год!\n\n"
-            "Надеюсь, карты помогли тебе лучше понять, что ждёт тебя в новом году. "
-            "Используй эти знания для планирования и принятия решений.\n\n"
-            "Удачи в 2026 году! ✨",
-            reply_markup=main_menu_kb(_is_admin(user.id)),
-        )
 
 
 @router.callback_query(F.data == "new_year_buy_fish")
 async def cb_new_year_buy_fish(cb: CallbackQuery, state: FSMContext) -> None:
-    """Кнопка пополнения баланса из новогоднего расклада."""
+    """Заглушка: расклад отключён."""
+    await state.clear()
     user = cb.from_user
+    await cb.answer()
     if not user:
-        await cb.answer()
+        await cb.message.answer("Расклад отключён.")
         return
 
-    with SessionLocal() as session:
-        db_user = session.query(User).filter(User.id == user.id).first()
-        if not db_user:
-            db_user = User(id=user.id)
-            session.add(db_user)
-            session.commit()
-        balance = getattr(db_user, "fish_balance", 0) or 0
-
-    await state.set_state(FishPaymentStates.viewing_balance)
     await cb.message.answer(
-        f"На твоем балансе сейчас {balance} 🐟\n\n"
-        "Рыбки — это внутренняя валюта за расклады.\n"
-        "Можешь пополнить баланс или вернуться в главное меню.",
-        reply_markup=fish_balance_kb(),
+        "Расклад отключён. Возвращаю в главное меню.",
+        reply_markup=main_menu_kb(_is_admin(user.id)),
     )
-    await cb.answer()
 
 
 # -------- Расклад "Энергия года" (бесплатный, общедоступный) --------
@@ -2230,99 +1959,15 @@ async def cb_new_year_buy_fish(cb: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "year_energy_deep_reading")
 async def cb_year_energy_deep_reading(cb: CallbackQuery, state: FSMContext) -> None:
-    """
-    Обработчик кнопки перехода к платному раскладу 'Итоги года'.
-    
-    Проверяет баланс пользователя (нужно 101 рыбка) и запускает
-    новогодний расклад с 13 вопросами, если баланс достаточен.
-    Если баланса недостаточно, предлагает пополнить его.
-    
-    Доступен всем пользователям.
-    """
+    """Заглушка: расклад отключён."""
+    await state.clear()
     user = cb.from_user
-    if not user:
-        await cb.answer()
-        return
-    
     await cb.answer()
-    
-    # Проверяем баланс и запускаем новогодний расклад
-    user_id = user.id
-    with SessionLocal() as session:
-        db_user = _get_or_create_user(session, user_id, user.username)
-        balance = getattr(db_user, "fish_balance", 0) or 0
-        
-        if balance < NEW_YEAR_READING_PRICE:
-            text = (
-                f"Мяу… Для подробного расклада на год нужно {NEW_YEAR_READING_PRICE} рыбок.\n"
-                f"У тебя сейчас {balance} 🐟\n\n"
-                "Пополни баланс, чтобы получить полный расклад на год с 13 вопросами!"
-            )
-            kb_buy_fish = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="Пополнить баланс",
-                            callback_data="new_year_buy_fish",
-                        )
-                    ]
-                ]
-            )
-            hungry_path = Path("src/data/images/hungry_milky.jpg")
-            if hungry_path.exists():
-                try:
-                    await cb.message.answer_photo(
-                        photo=BufferedInputFile(hungry_path.read_bytes(), filename=hungry_path.name),
-                        caption=text,
-                        reply_markup=kb_buy_fish,
-                    )
-                except TelegramBadRequest:
-                    await cb.message.answer(text, reply_markup=kb_buy_fish)
-            else:
-                await cb.message.answer(text, reply_markup=kb_buy_fish)
-            return
-        
-        # Списываем рыбки
-        db_user.fish_balance = balance - NEW_YEAR_READING_PRICE
-        session.commit()
-    
-    # Инициализируем расклад
-    await state.set_state(NewYearReadingStates.in_progress)
-    await state.update_data(
-        new_year_question_index=0,
-        new_year_cards=[],
-        new_year_ready_answers={},
-    )
-    
-    # Отправляем введение
-    intro_text = (
-        "🎄 Подробный расклад на год 🎄\n\n"
-        "Этот расклад поможет тебе понять, что ждёт тебя в новом году. "
-        "Мы пройдём через 13 вопросов, которые охватят все важные сферы твоей жизни.\n\n"
-        "После каждого вопроса ты получишь карту и её трактовку, а затем сможешь перейти к следующему вопросу.\n\n"
-        "Готов начать? Нажми кнопку ниже, чтобы вытянуть первую карту!"
-    )
-    
-    await cb.message.answer(intro_text)
+    if not user:
+        await cb.message.answer("Расклад отключён.")
+        return
+
     await cb.message.answer(
-        "Вытянуть карту для первого вопроса",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Вытянуть карту",
-                        callback_data="new_year_draw_card",
-                    )
-                ]
-            ]
-        ),
+        "Расклад отключён. Возвращаю в главное меню.",
+        reply_markup=main_menu_kb(_is_admin(user.id)),
     )
-    
-    # Запускаем фоновую генерацию первого вопроса
-    bot = get_bot()
-    asyncio.create_task(_generate_next_question_background(
-        user_id,
-        0,
-        state,
-        bot,
-    ))

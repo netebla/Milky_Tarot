@@ -1,20 +1,14 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 
-def main_menu_kb(show_admin_features: bool = False) -> ReplyKeyboardMarkup:
+def main_menu_kb(_show_admin_features: bool = False) -> ReplyKeyboardMarkup:
     keyboard = [
         [KeyboardButton(text="Вытянуть карту дня")],
         [KeyboardButton(text="Узнать совет карт")],
     ]
 
-    # Премиальный расклад, баланс и Энергия года доступны всем пользователям
     keyboard.append([KeyboardButton(text="Задать свой вопрос")])
     keyboard.append([KeyboardButton(text="Мои рыбки")])
-    keyboard.append([KeyboardButton(text="Энергия года")])
-
-    # Новогодний расклад только для админов
-    if show_admin_features:
-        keyboard.append([KeyboardButton(text="Новогодний расклад 2026")])
 
     keyboard.append([KeyboardButton(text="Мои настройки"), KeyboardButton(text="Помощь")])
 
@@ -176,16 +170,6 @@ def admin_push_type_kb(token: str) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="Обычный пуш (главное меню)", callback_data=f"admin_push_type:simple:{token}")],
             [InlineKeyboardButton(text="С раскладом 'Задать вопрос'", callback_data=f"admin_push_type:reading:{token}")],
-            [InlineKeyboardButton(text="С раскладом 'Энергия года'", callback_data=f"admin_push_type:year_energy:{token}")],
             [InlineKeyboardButton(text="Отменить", callback_data=f"admin_push_cancel:{token}")],
-        ]
-    )
-
-
-def admin_push_year_energy_kb() -> InlineKeyboardMarkup:
-    """Клавиатура для единоразового пуша с кнопкой 'Узнать энергию года'."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Узнать энергию года", callback_data="admin_push_year_energy")],
         ]
     )

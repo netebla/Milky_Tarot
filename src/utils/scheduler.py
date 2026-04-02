@@ -8,6 +8,7 @@ from typing import Any, Callable, Optional
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 logger = logging.getLogger(__name__)
@@ -138,6 +139,29 @@ class PushScheduler:
             replace_existing=True,
         )
         logger.info("Запланирован пуш для пользователя %s каждые %s дня(й) в %02d:%02d", user_id, n_days, hour, minute)
+
+    def schedule_once(
+        self,
+        job_id: str,
+        run_date,
+        callback: Callable[..., Any],
+        kwargs: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """
+        Запланировать callback один раз в конкретную дату/время.
+
+        run_date обычно должен быть timezone-aware datetime (для вашей timezone),
+        но APScheduler корректно работает и с naive при наличии timezone у scheduler.
+        """
+        wrapped = self._wrap_callback(callback)
+        self.scheduler.add_job(
+            wrapped,
+            DateTrigger(run_date=run_date),
+            id=job_id,
+            kwargs=kwargs or {},
+            replace_existing=True,
+        )
+        logger.info("Запланирован однократный job %s на %s", job_id, run_date)
     def remove(self, user_id: int) -> None:
         job_id = self._job_id(user_id)
         job = self.scheduler.get_job(job_id)
