@@ -140,6 +140,28 @@ class PushScheduler:
         )
         logger.info("Запланирован пуш для пользователя %s каждые %s дня(й) в %02d:%02d", user_id, n_days, hour, minute)
 
+    def schedule_interval_hours(
+        self,
+        job_id: str,
+        hours: int,
+        callback: Callable[..., Any],
+        kwargs: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Периодическая задача каждые `hours` часов (для обслуживания БД и т.п.)."""
+        if hours <= 0:
+            logger.warning("Некорректный интервал часов=%s для job %s", hours, job_id)
+            return
+        wrapped = self._wrap_callback(callback)
+        trigger = IntervalTrigger(hours=hours, timezone=self.timezone)
+        self.scheduler.add_job(
+            wrapped,
+            trigger,
+            id=job_id,
+            kwargs=kwargs or {},
+            replace_existing=True,
+        )
+        logger.info("Запланирована задача %s каждые %s ч.", job_id, hours)
+
     def schedule_once(
         self,
         job_id: str,

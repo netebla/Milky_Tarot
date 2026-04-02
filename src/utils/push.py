@@ -1,7 +1,6 @@
 from __future__ import annotations
 import asyncio
 import logging
-import os
 import random
 from datetime import date
 from pathlib import Path
@@ -10,6 +9,7 @@ from aiogram import Bot
 from sqlalchemy.orm import Session
 
 from bot.keyboards import main_menu_kb, push_card_kb
+from utils.admin_ids import is_admin as _is_admin
 from .db import SessionLocal, User
 
 logger = logging.getLogger(__name__)
@@ -35,14 +35,6 @@ PUSH_TEXTS = _load_push_texts()
 DEFAULT_PUSH_TEXT = (
     "Привет! Сегодня можно вытянуть свою карту дня. Открой бота и нажми кнопку."
 )
-
-_ADMIN_RAW = os.getenv("ADMIN_ID") or os.getenv("ADMIN_IDS") or ""
-ADMIN_IDS = {s.strip() for s in _ADMIN_RAW.split(",") if s.strip()}
-
-
-def _is_admin(user_id: int) -> bool:
-    return str(user_id) in ADMIN_IDS
-
 
 async def send_push_card(bot: Bot, user_id: int) -> None:
     """Отправить пользователю ежедневный пуш с текстом из pushes.txt (случайная строка)."""

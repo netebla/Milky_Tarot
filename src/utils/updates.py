@@ -1,19 +1,13 @@
 import asyncio
+import os
 from sqlalchemy.orm import Session
 from utils.db import SessionLocal, User
+from utils.admin_ids import is_admin as _is_admin
 from aiogram import Bot
 from bot.keyboards import main_menu_kb  # твоя функция для клавиатуры
-import os
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 bot = Bot(token=BOT_TOKEN)
-
-_ADMIN_RAW = os.getenv("ADMIN_ID") or os.getenv("ADMIN_IDS") or ""
-ADMIN_IDS = {s.strip() for s in _ADMIN_RAW.split(",") if s.strip()}
-
-
-def _is_admin(user_id: int) -> bool:
-    return str(user_id) in ADMIN_IDS
 
 async def update_keyboards():
     async with bot:

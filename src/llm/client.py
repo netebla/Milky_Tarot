@@ -34,6 +34,11 @@ def _get_api_key() -> str:
     return api_key
 
 
+async def get_genai_client() -> genai.Client:
+    """Публичная обёртка для кода, которому нужен низкоуровневый клиент (чат, tools)."""
+    return await _get_client()
+
+
 async def _get_client() -> genai.Client:
     global _client
     if _client is not None:

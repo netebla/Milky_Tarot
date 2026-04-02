@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from datetime import datetime
 
 from aiogram import Bot, F, Router
@@ -25,6 +24,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardBut
 from pathlib import Path
 from sqlalchemy.orm import Session
 
+from utils.admin_ids import is_admin as _is_admin
 from utils.db import SessionLocal, User, Payment
 from utils.fish import tariff_to_amounts
 from utils.yookassa_client import create_payment, get_payment, YooKassaError
@@ -36,15 +36,6 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 IMAGES_DIR = DATA_DIR / "images"
 
 router = Router()
-
-
-_ADMIN_RAW = os.getenv("ADMIN_ID") or os.getenv("ADMIN_IDS") or ""
-ADMIN_IDS = {s.strip() for s in _ADMIN_RAW.split(",") if s.strip()}
-
-
-def _is_admin(user_id: int) -> bool:
-    """Проверяем, является ли пользователь админом бота."""
-    return str(user_id) in ADMIN_IDS
 
 
 def _tariffs_keyboard() -> InlineKeyboardMarkup:
@@ -165,6 +156,15 @@ async def _auto_check_payment(bot: Bot, payment_db_id: int, user_id: int) -> Non
                 session.commit()
                 new_balance = user_obj.fish_balance
 
+                logger.info(
+                    "[payment] succeeded db_id=%s user_id=%s fish_credited=%s balance=%s method=%s source=auto_poll",
+                    payment_db_id,
+                    user_id,
+                    payment.fish_amount,
+                    new_balance,
+                    method_type or "",
+                )
+
                 text_lines = [
                     "Оплата прошла успешно ✨",
                     f"Тебе начислено {payment.fish_amount} 🐟.",
@@ -195,6 +195,12 @@ async def _auto_check_payment(bot: Bot, payment_db_id: int, user_id: int) -> Non
             session.commit()
 
         if status in {"canceled"}:
+            logger.info(
+                "[payment] canceled db_id=%s user_id=%s yookassa_id=%s source=auto_poll",
+                payment_db_id,
+                user_id,
+                yookassa_id,
+            )
             await bot.send_message(
                 chat_id=user_id,
                 text=(
@@ -306,6 +312,15 @@ async def cb_pay_tariff(cb: CallbackQuery) -> None:
         session.commit()
         session.refresh(db_payment)
         payment_db_id = db_payment.id
+
+    logger.info(
+        "[payment] created db_id=%s yookassa_id=%s user_id=%s amount_rub=%s fish=%s",
+        payment_db_id,
+        yookassa_id,
+        user.id,
+        amount_rub,
+        total_fish,
+    )
 
     # Запускаем фоновую проверку статуса платежа
     bot = cb.message.bot
@@ -425,6 +440,15 @@ async def cb_check_payment(cb: CallbackQuery) -> None:
                 payment.status = "succeeded"
                 session.commit()
                 new_balance = user_obj.fish_balance
+
+                logger.info(
+                    "[payment] succeeded db_id=%s user_id=%s fish_credited=%s balance=%s method=%s source=manual_check",
+                    payment_db_id,
+                    user.id,
+                    payment.fish_amount,
+                    new_balance,
+                    method_type or "",
+                )
 
                 text_lines = [
                     "Оплата прошла успешно ✨",

@@ -8,6 +8,8 @@ def main_menu_kb(_show_admin_features: bool = False) -> ReplyKeyboardMarkup:
     ]
 
     keyboard.append([KeyboardButton(text="Задать свой вопрос")])
+    if _show_admin_features:
+        keyboard.append([KeyboardButton(text="Живой диалог 🌙")])
     keyboard.append([KeyboardButton(text="Мои рыбки")])
 
     keyboard.append([KeyboardButton(text="Мои настройки"), KeyboardButton(text="Помощь")])

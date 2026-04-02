@@ -15,7 +15,9 @@ from utils.scheduler import PushScheduler, DEFAULT_PUSH_TIME
 from utils.app_state import set_bot, set_scheduler
 from utils.push import send_main_menu_refresh_all, send_push_card
 from utils.db import SessionLocal, User
+from utils import session_manager as dialogue_sm
 from .handlers import router as handlers_router
+from .live_dialogue import router as live_dialogue_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -54,11 +56,26 @@ async def reschedule_user_pushes(bot: Bot) -> None:
             push_scheduler.remove(user["id"])
 
 
+def _expire_stale_live_dialogues() -> None:
+    try:
+        with SessionLocal() as db:
+            n = dialogue_sm.expire_stale_sessions(db)
+        if n:
+            logger.info("Автозакрыто незавершённых живых диалогов: %s", n)
+    except Exception:
+        logger.exception("Не удалось закрыть просроченные живые диалоги")
+
+
 async def on_startup(bot: Bot) -> None:
     push_scheduler.start()
     set_bot(bot)
     set_scheduler(push_scheduler)
     await reschedule_user_pushes(bot)
+    push_scheduler.schedule_interval_hours(
+        "live-dialogue-expire",
+        1,
+        _expire_stale_live_dialogues,
+    )
     # Тихо обновляем reply-клавиатуру всем пользователям на следующий день,
     # чтобы старые пункты меню исчезли из интерфейса клиента.
     try:
@@ -100,6 +117,7 @@ async def main() -> None:
     set_scheduler(push_scheduler)
 
     dp.include_router(handlers_router)
+    dp.include_router(live_dialogue_router)
 
     # Регистрируем события старта и завершения
     dp.startup.register(on_startup)

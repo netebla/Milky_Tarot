@@ -30,6 +30,7 @@ from utils.cards_loader import (
     choose_random_card,
     load_cards,
 )
+from utils.admin_ids import is_admin as _is_admin
 from utils.db import SessionLocal, User
 from utils.push import send_push_card
 from utils.scheduler import DEFAULT_PUSH_TIME
@@ -64,8 +65,6 @@ except Exception as e:
     CARDS = []
 
 
-_ADMIN_RAW = os.getenv("ADMIN_ID") or os.getenv("ADMIN_IDS") or ""
-ADMIN_IDS = {s.strip() for s in _ADMIN_RAW.split(",") if s.strip()}
 PENDING_PUSHES: dict[str, dict[str, object]] = {}
 
 
@@ -94,10 +93,6 @@ class FishPaymentStates(StatesGroup):
 class AdminPushStates(StatesGroup):
     waiting_text = State()
     waiting_push_type = State()
-
-
-def _is_admin(user_id: int) -> bool:
-    return str(user_id) in ADMIN_IDS
 
 
 async def _fetch_image_bytes(url: str) -> bytes:
@@ -697,7 +692,7 @@ async def cb_push_on(cb: CallbackQuery) -> None:
 
 @router.message(Command("admin_stats"))
 async def admin_stats(message: Message) -> None:
-    if str(message.from_user.id) not in ADMIN_IDS:
+    if not _is_admin(message.from_user.id):
         await message.answer("Недостаточно прав.")
         return
 
@@ -732,7 +727,7 @@ async def admin_stats(message: Message) -> None:
 
 @router.message(Command("admin_push"))
 async def admin_push(message: Message, state: FSMContext) -> None:
-    if str(message.from_user.id) not in ADMIN_IDS:
+    if not _is_admin(message.from_user.id):
         await message.answer("Недостаточно прав.")
         return
 
@@ -762,7 +757,7 @@ async def admin_push(message: Message, state: FSMContext) -> None:
 
 @router.message(AdminPushStates.waiting_text)
 async def admin_push_text(message: Message, state: FSMContext) -> None:
-    if str(message.from_user.id) not in ADMIN_IDS:
+    if not _is_admin(message.from_user.id):
         await message.answer("Недостаточно прав.")
         await state.clear()
         return
@@ -789,7 +784,7 @@ async def admin_push_text(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("admin_push_confirm:"))
 async def cb_admin_push_confirm(cb: CallbackQuery) -> None:
-    if str(cb.from_user.id) not in ADMIN_IDS:
+    if not _is_admin(cb.from_user.id):
         await cb.answer()
         return
 
@@ -862,7 +857,7 @@ async def cb_admin_push_confirm(cb: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("admin_push_type:"))
 async def cb_admin_push_type(cb: CallbackQuery) -> None:
     """Обработчик выбора типа пуша."""
-    if str(cb.from_user.id) not in ADMIN_IDS:
+    if not _is_admin(cb.from_user.id):
         await cb.answer()
         return
 
@@ -924,7 +919,7 @@ async def cb_admin_push_type(cb: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("admin_push_type_back:"))
 async def cb_admin_push_type_back(cb: CallbackQuery) -> None:
     """Возврат к выбору типа пуша."""
-    if str(cb.from_user.id) not in ADMIN_IDS:
+    if not _is_admin(cb.from_user.id):
         await cb.answer()
         return
 
@@ -949,7 +944,7 @@ async def cb_admin_push_type_back(cb: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("admin_push_cancel:"))
 async def cb_admin_push_cancel(cb: CallbackQuery) -> None:
-    if str(cb.from_user.id) not in ADMIN_IDS:
+    if not _is_admin(cb.from_user.id):
         await cb.answer()
         return
 

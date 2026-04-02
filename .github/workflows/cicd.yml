@@ -68,14 +68,14 @@ jobs:
             mkdir -p ~/apps/milky_tarot/data
             [ -f ~/apps/milky_tarot/data/users.json ] || echo '{}' > ~/apps/milky_tarot/data/users.json
 
-      - name: Upload compose and env
+      - name: Upload compose, migrations
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
-          source: "docker-compose.prod.yml"
+          source: "docker-compose.prod.yml,migrations"
           target: "~/apps/milky_tarot/"
 
       - name: Write .env on server
@@ -115,3 +115,6 @@ jobs:
             docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d
+            echo "DB: после изменения схемы применить миграцию (один раз):"
+            echo "  cd ~/apps/milky_tarot && docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d tarot_db < migrations/001_live_dialogue.sql"
+            echo "  (файл также внутри образа бота: /app/migrations/001_live_dialogue.sql)"
