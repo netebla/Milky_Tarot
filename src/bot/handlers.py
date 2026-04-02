@@ -30,7 +30,6 @@ from utils.cards_loader import (
     choose_random_card,
     load_cards,
 )
-from utils.year_energy_loader import load_year_energy_archetypes, get_archetype_by_card
 from utils.db import SessionLocal, User
 from utils.push import send_push_card
 from utils.scheduler import DEFAULT_PUSH_TIME
@@ -50,7 +49,6 @@ from .keyboards import (
     fish_payment_method_kb,
     admin_push_with_reading_kb,
     admin_push_type_kb,
-    admin_push_year_energy_kb,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,10 +76,6 @@ class ThreeCardsStates(StatesGroup):
 
 class NewYearReadingStates(StatesGroup):
     in_progress = State()
-
-
-class YearEnergyStates(StatesGroup):
-    waiting_selection = State()
 
 
 class OnboardingStates(StatesGroup):
@@ -128,136 +122,6 @@ def _get_or_create_user(session: Session, user_id: int, username: str | None) ->
     session.commit()
     session.refresh(user)
     return user
-
-
-def _choose_year_energy_card(user_id: int, archetypes: dict[str, str]) -> tuple[str, bool]:
-    """
-    Выбирает карту для расклада "Энергия года".
-    
-    Если у пользователя уже есть сохраненная карта, возвращает её.
-    Иначе выбирает случайную карту и сохраняет её в БД.
-    
-    Returns:
-        tuple[название_карты, была_ли_карта_уже_сохранена]
-    """
-    with SessionLocal() as session:
-        db_user = _get_or_create_user(session, user_id, None)
-        
-        # Если карта уже сохранена, возвращаем её
-        if db_user.year_energy_card and db_user.year_energy_card in archetypes:
-            return db_user.year_energy_card, True
-        
-        # Иначе выбираем случайную карту из доступных архетипов
-        available_cards = [card for card in CARDS if card.title in archetypes]
-        if not available_cards:
-            raise ValueError("Не найдено карт для расклада.")
-        
-        selected_card = random.choice(available_cards)
-        card_title = selected_card.title
-        
-        # Сохраняем выбранную карту
-        db_user.year_energy_card = card_title
-        session.commit()
-        
-        return card_title, False
-
-
-async def _send_card_image(message_or_cb: Message | CallbackQuery, card_title: str) -> bool:
-    """
-    Отправляет изображение карты.
-    
-    Returns:
-        True если изображение было успешно отправлено, False иначе
-    """
-    # Находим карту по названию
-    selected_card = next((card for card in CARDS if card.title == card_title), None)
-    if not selected_card:
-        return False
-    
-    # Определяем объект для отправки сообщения
-    if isinstance(message_or_cb, CallbackQuery):
-        send_func = message_or_cb.message.answer_photo
-    else:
-        send_func = message_or_cb.answer_photo
-    
-    # Пытаемся отправить локальное изображение
-    local_path = getattr(selected_card, "image_path", None)
-    if callable(local_path):
-        path = local_path()
-        if path.exists():
-            try:
-                await send_func(
-                    photo=BufferedInputFile(path.read_bytes(), filename=path.name),
-                    caption=selected_card.title,
-                )
-                return True
-            except TelegramBadRequest:
-                pass
-    
-    # Пытаемся загрузить изображение по URL
-    try:
-        image_bytes = await _fetch_image_bytes(selected_card.image_url())
-        await send_func(
-            photo=BufferedInputFile(image_bytes, filename=f"{selected_card.title}.jpg"),
-            caption=selected_card.title,
-        )
-        return True
-    except (httpx.HTTPError, TelegramBadRequest, TelegramNetworkError):
-        pass
-    
-    # Если не удалось отправить изображение, отправляем только название
-    if isinstance(message_or_cb, CallbackQuery):
-        await message_or_cb.message.answer(selected_card.title)
-    else:
-        await message_or_cb.answer(selected_card.title)
-    
-    return False
-
-
-async def _run_year_energy_reading(message: Message, state: FSMContext) -> None:
-    """Общий сценарий выдачи бесплатного расклада «Энергия года»."""
-    await state.clear()
-
-    user = message.from_user
-    if not user:
-        return
-
-    archetypes = load_year_energy_archetypes()
-    if not archetypes:
-        await message.answer("К сожалению, данные для расклада временно недоступны.")
-        return
-
-    try:
-        card_title, was_saved = _choose_year_energy_card(user.id, archetypes)
-        archetype_description = archetypes[card_title]
-
-        await _send_card_image(message, card_title)
-
-        await message.answer(f"✨ Энергия года: {card_title} ✨\n\n{archetype_description}")
-
-        await message.answer(
-            "Отлично, Архетип года пойман. 😈\n"
-            "Хочешь разобрать его глубже? Могу сделать подробный расклад на год: где будет рост, где проверка, что станет твоей опорой и какой шанс важно не пропустить.",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="Разобрать глубже (101 🐟)",
-                            callback_data="year_energy_deep_reading",
-                        )
-                    ]
-                ]
-            ),
-        )
-
-        if not was_saved:
-            with SessionLocal() as session:
-                db_user = _get_or_create_user(session, user.id, user.username)
-                db_user.draw_count = (db_user.draw_count or 0) + 1
-                db_user.last_activity_date = date.today()
-                session.commit()
-    except ValueError as e:
-        await message.answer(str(e))
 
 
 async def _start_three_cards_flow(message: Message, state: FSMContext) -> None:
@@ -955,10 +819,8 @@ async def cb_admin_push_confirm(cb: CallbackQuery) -> None:
     # Выбираем клавиатуру в зависимости от типа пуша
     if push_type == "reading":
         reply_markup = admin_push_with_reading_kb()
-    elif push_type == "year_energy":
-        reply_markup = admin_push_year_energy_kb()
-    else:  # simple или по умолчанию
-        reply_markup = None  # Будет использовано главное меню
+    else:  # simple, legacy year_energy, или по умолчанию — главное меню
+        reply_markup = None
 
     sent = 0
     failed = 0
@@ -1009,13 +871,13 @@ async def cb_admin_push_type(cb: CallbackQuery) -> None:
     except TelegramBadRequest:
         logger.warning("Admin push type callback expired for admin %s", cb.from_user.id)
 
-    # Формат: admin_push_type:simple:token или admin_push_type:reading:token или admin_push_type:year_energy:token
+    # Формат: admin_push_type:simple:token | admin_push_type:reading:token
     parts = cb.data.split(":", 2)
     if len(parts) < 3:
         await cb.message.edit_text("Ошибка в данных. Попробуй снова.")
         return
 
-    push_type = parts[1]  # simple, reading, year_energy
+    push_type = parts[1]  # simple, reading (year_energy — устарело, обрабатывается как simple при отправке)
     token = parts[2]
 
     payload = PENDING_PUSHES.get(token)
@@ -1028,7 +890,7 @@ async def cb_admin_push_type(cb: CallbackQuery) -> None:
     push_type_names = {
         "simple": "Обычный пуш (главное меню)",
         "reading": "С раскладом 'Задать вопрос'",
-        "year_energy": "С раскладом 'Энергия года'",
+        "year_energy": "Обычный пуш (расклад отключён)",
     }
 
     push_text_html = str(payload.get("text_html") or "").strip()
@@ -1939,22 +1801,6 @@ async def cb_new_year_buy_fish(cb: CallbackQuery, state: FSMContext) -> None:
         "Расклад отключён. Возвращаю в главное меню.",
         reply_markup=main_menu_kb(_is_admin(user.id)),
     )
-
-
-# -------- Расклад "Энергия года" (бесплатный, общедоступный) --------
-#
-# Расклад позволяет получить архетип года - случайную карту старших арканов
-# с трактовкой того, какая энергия будет преобладать в году.
-# После получения трактовки пользователю предлагается перейти к платному
-# раскладу "Итоги года" (101 рыбка, 13 вопросов).
-#
-# Данные архетипов загружаются из CSV файла year_energy_archetypes.csv,
-# который создаётся парсером parse_year_energy.py из docx файла.
-#
-# Важно: карта выбирается один раз и сохраняется в БД (поле year_energy_card),
-# чтобы пользователь всегда получал одну и ту же карту при повторных запросах.
-
-# Хендлер перенесён выше и работает из любого состояния.
 
 
 @router.callback_query(F.data == "year_energy_deep_reading")
