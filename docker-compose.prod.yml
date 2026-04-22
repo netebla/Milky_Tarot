@@ -22,6 +22,10 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       PROXY_ENABLED: ${PROXY_ENABLED:-false}
       PROXY_URL: ${PROXY_URL:-}
+      HTTP_PROXY: ${PROXY_URL:-}
+      HTTPS_PROXY: ${PROXY_URL:-}
+      ALL_PROXY: ${PROXY_URL:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,db,tarot_db,postgres,redis}
       TZ: Europe/Moscow
     depends_on:
       - db
