@@ -37,7 +37,10 @@ logger = logging.getLogger(__name__)
 router = Router(name="live_dialogue")
 
 LIVE_BUTTON_TEXT = "Живой диалог 🌙"
-MAX_TOOL_ROUNDS = 10
+# Достаточно для расклада ~9–10 карт (по одному draw_card на раунд) + финальный ответ.
+MAX_TOOL_ROUNDS = 22
+# Защита от бесконечной цепочки «один расклад → автопродолжение».
+_AUTO_SPREAD_CHAIN_MAX = 4
 
 # Не трактовать нажатия главного меню как реплики диалога (обработают другие роутеры после выхода).
 _MAIN_MENU_TEXTS = frozenset(
@@ -229,6 +232,8 @@ async def _handle_model_result(
     display_text: str,
     meta: dict[str, Any] | None,
     drawn_this_turn: list[dict[str, Any]] | None = None,
+    *,
+    auto_spread_depth: int = 0,
 ) -> None:
     from bot.keyboards import main_menu_kb
 
@@ -247,15 +252,75 @@ async def _handle_model_result(
         db.refresh(session)
         _apply_phase_metadata(db, session, meta)
 
-        await _send_drawn_cards_live(message, drawn_this_turn)
-
         action = (meta or {}).get("action")
+        db.refresh(session)
+        pending_after = session.pending_spreads or []
+        # Не показывать карты вместе с экраном выбора расклада (частая ошибка модели).
+        is_propose_ui = action == "propose_spreads" and len(pending_after) > 0
+        if not is_propose_ui:
+            await _send_drawn_cards_live(message, drawn_this_turn)
+
         if action == "propose_spreads":
             db.refresh(session)
             spreads = session.pending_spreads or []
             if spreads:
+                if len(spreads) == 1 and auto_spread_depth < _AUTO_SPREAD_CHAIN_MAX:
+                    sp = spreads[0]
+                    name = (sp.get("name") or "Расклад").strip()
+                    positions = sp.get("positions") or {}
+                    if not isinstance(positions, dict):
+                        positions = {}
+                    sm.set_session_spread(db, session, name, positions)
+                    choice = (
+                        f"Я выбираю расклад «{name}». Позиции: {json.dumps(positions, ensure_ascii=False)}"
+                    )
+                    sm.save_message(db, session_id, "user", choice)
+
+                    raw_intro = (display_text or "").strip()
+                    if raw_intro:
+                        await message.answer(format_model_reply_for_telegram_html(raw_intro))
+                    else:
+                        await message.answer(
+                            f"Договорились — расклад «{html.escape(name)}», открываем карты по позициям."
+                        )
+
+                    system_prompt = _system_prompt_for_session(user_id, db)
+                    system_prompt += (
+                        f"\n\nТекущая фаза сессии в базе: {session.phase}. "
+                        "Пользователь согласился на единственный предложенный расклад (автовыбор в боте). "
+                        "Вызови draw_card по каждой позиции из расклада подряд (все позиции), "
+                        "затем дай связную интерпретацию; не останавливайся на одной карте, если позиций несколько."
+                    )
+                    try:
+                        display_text2, meta2, drawn2 = await _gemini_multi_round(
+                            db, session_id, system_prompt
+                        )
+                    except GeminiClientError:
+                        logger.exception("Gemini error after auto-select spread")
+                        await message.answer("Не удалось связаться с Милки. Попробуй чуть позже.")
+                        return
+
+                    await _handle_model_result(
+                        message,
+                        state,
+                        user_id,
+                        session_id,
+                        display_text2,
+                        meta2,
+                        drawn2,
+                        auto_spread_depth=auto_spread_depth + 1,
+                    )
+                    return
+
+                if len(spreads) == 1:
+                    raw_intro = (display_text or "").strip() or "Продолжим с этим раскладом:"
+                    body = format_model_reply_for_telegram_html(raw_intro)
+                    await message.answer(body)
+                    return
+
                 raw_intro = (display_text or "").strip() or "Выбери расклад:"
                 body = format_model_reply_for_telegram_html(raw_intro)
+                body += "\n\nВыбери вариант кнопкой под этим сообщением."
                 await message.answer(
                     body,
                     reply_markup=_spreads_keyboard(session.id, spreads),
