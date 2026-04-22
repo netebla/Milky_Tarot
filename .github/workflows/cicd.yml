@@ -94,6 +94,7 @@ jobs:
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
             PROXY_ENABLED=${{ secrets.PROXY_ENABLED }}
             PROXY_URL=${{ secrets.PROXY_URL }}
+            NO_PROXY=${{ secrets.NO_PROXY }}
             TZ=Europe/Moscow
             GITHUB_REPOSITORY_OWNER=${{ github.repository_owner }}
             PAYMENT_BOT_TOKEN=${{ secrets.PAYMENT_BOT_TOKEN }}

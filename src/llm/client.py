@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import logging
+from urllib.parse import urlsplit, urlunsplit
 from typing import Optional
 
 from google import genai
@@ -23,6 +24,21 @@ logger = logging.getLogger(__name__)
 
 class GeminiClientError(RuntimeError):
     """Ошибки взаимодействия с Google Gemini."""
+
+
+def _mask_proxy_url(proxy_url: str | None) -> str:
+    """Скрывает учётные данные прокси в логах."""
+    if not proxy_url:
+        return "<empty>"
+    try:
+        parts = urlsplit(proxy_url)
+        host = parts.hostname or ""
+        port = f":{parts.port}" if parts.port else ""
+        auth = "***:***@" if parts.username or parts.password else ""
+        netloc = f"{auth}{host}{port}"
+        return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+    except Exception:
+        return "<invalid-proxy-url>"
 
 
 def _get_api_key() -> str:
@@ -49,7 +65,7 @@ async def _get_client() -> genai.Client:
             if PROXY_ENABLED:
                 for var in ("ALL_PROXY", "HTTPS_PROXY", "HTTP_PROXY"):
                     os.environ[var] = PROXY_URL
-                logger.info("Gemini client proxy enabled: %s", PROXY_URL)
+                logger.info("Gemini client proxy enabled: %s", _mask_proxy_url(PROXY_URL))
             else:
                 logger.info("Gemini client proxy disabled")
 
