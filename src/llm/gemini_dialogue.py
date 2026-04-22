@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import re
@@ -46,6 +47,8 @@ def build_system_prompt(user_memory_section: str) -> str:
     return (
         "Ты — Milky, живая таро-кошка. Ты ведёшь настоящий разговор, а не читаешь заранее написанный текст.\n\n"
         "ТВОИ ПРАВИЛА:\n"
+        "0. Не используй Markdown-звёздочки (** или * вокруг слов) для «жирного» или курсива — в Telegram пользователь увидит сами звёздочки. "
+        "Пиши обычным текстом; если очень нужно выделить мысль — формулировкой, без разметки.\n"
         "1. Никогда не объявляй \"расклад начат\" или \"позиция X означает Y\" как шаблон — говори живо, как в разговоре.\n"
         "2. Ты можешь тянуть карту в любой момент, когда чувствуешь, что это нужно. Используй функцию draw_card(position_name). "
         "Не тяни все карты сразу — тяни по одной, по мере того как разговор этого требует.\n"
@@ -173,6 +176,25 @@ def parse_action_metadata(text: str) -> dict[str, Any] | None:
         if action in ("propose_spreads", "complete"):
             return obj
     return None
+
+
+def format_model_reply_for_telegram_html(text: str) -> str:
+    """
+    Подготовить текст ответа модели к отправке с parse_mode=HTML.
+
+    Экранирует HTML-спецсимволы; фрагменты **как в markdown** превращает в <b>...</b>
+    (на случай, если модель всё же использует звёздочки).
+    """
+    if not text:
+        return text
+    out: list[str] = []
+    pos = 0
+    for m in re.finditer(r"\*\*(.+?)\*\*", text, flags=re.DOTALL):
+        out.append(html.escape(text[pos : m.start()]))
+        out.append("<b>" + html.escape(m.group(1)) + "</b>")
+        pos = m.end()
+    out.append(html.escape(text[pos:]))
+    return "".join(out)
 
 
 def strip_action_json_from_text(text: str) -> str:
