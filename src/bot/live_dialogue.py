@@ -178,7 +178,8 @@ async def _gemini_multi_round(
             if not CARDS:
                 tool_payload = {"error": "Колода недоступна", "position_name": pos}
             else:
-                title, rev = draw_random_card(CARDS)
+                title, _rev = draw_random_card(CARDS)
+                rev = False
                 sm.save_drawn_card(db, session_id, pos, title, rev)
                 drawn_this_turn.append(
                     {"card_name": title, "is_reversed": rev, "position_name": pos}
@@ -255,6 +256,42 @@ def _spread_completion_stats(db, session: DialogueSession) -> tuple[int, int, li
 
     missing = [p for p in expected_names if p not in opened]
     return len(expected_names), len(expected_names) - len(missing), missing
+
+
+def _strip_action_artifacts_for_user(text: str) -> str:
+    """
+    Финальная серверная очистка текста перед отправкой пользователю.
+    Удаляет артефакты action-json, даже если модель вернула их в нестандартном виде.
+    """
+    if not text:
+        return ""
+
+    cleaned = text
+    # Удаляем fenced JSON-блоки c action.
+    cleaned = re.sub(
+        r"```(?:json)?\s*\{\s*\"action\"\s*:\s*\"(?:propose_spreads|draw_cards|complete)\"[\s\S]*?\}\s*```",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    # Удаляем однострочные action JSON.
+    cleaned = re.sub(
+        r"\{\s*\"action\"\s*:\s*\"(?:propose_spreads|draw_cards|complete)\"[^\n]*\}",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    # Удаляем строки, похожие на технический action-декоратор.
+    cleaned_lines: list[str] = []
+    for line in cleaned.splitlines():
+        ln = line.strip()
+        if ln.startswith("{") and "\"action\"" in ln:
+            continue
+        cleaned_lines.append(line)
+    cleaned = "\n".join(cleaned_lines)
+    # Нормализуем лишние пустые строки.
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned
 
 
 def _extract_batch_request(meta: dict[str, Any] | None) -> tuple[int | None, list[str], str]:
@@ -337,7 +374,7 @@ async def _handle_model_result(
                     )
                     sm.save_message(db, session_id, "user", choice)
 
-                    raw_intro = (display_text or "").strip()
+                    raw_intro = _strip_action_artifacts_for_user(display_text or "")
                     if raw_intro:
                         await message.answer(format_model_reply_for_telegram_html(raw_intro))
                     else:
@@ -374,12 +411,14 @@ async def _handle_model_result(
                     return
 
                 if len(spreads) == 1:
-                    raw_intro = (display_text or "").strip() or "Продолжим с этим раскладом:"
+                    raw_intro = _strip_action_artifacts_for_user(display_text or "")
+                    raw_intro = raw_intro or "Продолжим с этим раскладом:"
                     body = format_model_reply_for_telegram_html(raw_intro)
                     await message.answer(body)
                     return
 
-                raw_intro = (display_text or "").strip() or "Выбери расклад:"
+                raw_intro = _strip_action_artifacts_for_user(display_text or "")
+                raw_intro = raw_intro or "Выбери расклад:"
                 body = format_model_reply_for_telegram_html(raw_intro)
                 body += "\n\nВыбери вариант кнопкой под этим сообщением."
                 await message.answer(
@@ -405,7 +444,8 @@ async def _handle_model_result(
 
             drawn_batch: list[dict[str, Any]] = []
             for pos in positions:
-                title, rev = draw_random_card(CARDS)
+                title, _rev = draw_random_card(CARDS)
+                rev = False
                 sm.save_drawn_card(db, session_id, pos, title, rev)
                 hint = _rag_hint(title)
                 sm.save_message(
@@ -426,8 +466,9 @@ async def _handle_model_result(
                 )
 
             await _send_drawn_cards_live(message, drawn_batch)
-            if display_text.strip():
-                await message.answer(format_model_reply_for_telegram_html(display_text.strip()))
+            clean_text = _strip_action_artifacts_for_user(display_text or "")
+            if clean_text:
+                await message.answer(format_model_reply_for_telegram_html(clean_text))
             return
 
         if action == "complete":
@@ -479,8 +520,9 @@ async def _handle_model_result(
             ok, err = sm.try_complete_session(db, user_id, session, memories)
             if ok:
                 await state.clear()
+                goodbye_src = _strip_action_artifacts_for_user(display_text or "")
                 goodbye = format_model_reply_for_telegram_html(
-                    (display_text or "До встречи, солнце.").strip() or "До встречи, солнце."
+                    goodbye_src.strip() or "До встречи, солнце."
                 )
                 await message.answer(
                     goodbye + "\n\nСессия завершена.",
@@ -488,13 +530,15 @@ async def _handle_model_result(
                 )
             else:
                 err_html = html.escape(err or "Не удалось завершить сессию.")
-                main_part = format_model_reply_for_telegram_html(display_text or "")
+                main_src = _strip_action_artifacts_for_user(display_text or "")
+                main_part = format_model_reply_for_telegram_html(main_src)
                 await message.answer(
                     (main_part + "\n\n" if main_part else "") + err_html
                 )
             return
 
-        body = format_model_reply_for_telegram_html((display_text or "…").strip() or "…")
+        clean_body = _strip_action_artifacts_for_user(display_text or "")
+        body = format_model_reply_for_telegram_html(clean_body.strip() or "…")
         await message.answer(body)
 
 

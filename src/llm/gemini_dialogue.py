@@ -250,6 +250,20 @@ def strip_action_json_from_text(text: str) -> str:
             blob = json.dumps(obj, ensure_ascii=False)
             if blob in s:
                 s = s.replace(blob, "").strip()
+    # Удалить хвостовой JSON action даже если форматирование/пробелы отличаются.
+    s = re.sub(
+        r"\s*\{\s*\"action\"\s*:\s*\"(?:propose_spreads|draw_cards|complete)\"[\s\S]*\}\s*$",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    ).strip()
+    # Удалить однострочные action-json где угодно в тексте.
+    s = re.sub(
+        r"\{\s*\"action\"\s*:\s*\"(?:propose_spreads|draw_cards|complete)\"[^\n]*\}",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    ).strip()
     return s.strip()
 
 
