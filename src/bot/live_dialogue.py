@@ -88,6 +88,28 @@ def _card_by_title(title: str) -> Card | None:
     return None
 
 
+def _get_existing_drawn_for_position(db, session_id: int, position_name: str) -> dict[str, Any] | None:
+    pos = (position_name or "").strip()
+    if not pos:
+        return None
+    row = (
+        db.query(DrawnCard)
+        .filter(
+            DrawnCard.session_id == session_id,
+            DrawnCard.position_name == pos,
+        )
+        .order_by(DrawnCard.id.desc())
+        .first()
+    )
+    if not row:
+        return None
+    return {
+        "card_name": row.card_name,
+        "is_reversed": bool(row.is_reversed),
+        "position_name": row.position_name,
+    }
+
+
 async def _send_drawn_cards_live(message: Message, drawn: list[dict[str, Any]]) -> None:
     """Отправить изображения только что вытянутых в этом ходе карт (как в раскладе «три карты»)."""
     if not drawn:
@@ -201,6 +223,27 @@ async def _gemini_multi_round(
             if c.get("name") != "draw_card":
                 continue
             pos = (c.get("args") or {}).get("position_name") or "Позиция"
+            existing = _get_existing_drawn_for_position(db, session_id, pos)
+            if existing:
+                title = existing["card_name"]
+                rev = bool(existing["is_reversed"])
+                hint = _rag_hint(title)
+                tool_payload = {
+                    "card_name": title,
+                    "is_reversed": rev,
+                    "position_name": existing["position_name"],
+                    "meaning_hint": hint,
+                    "already_opened": True,
+                }
+                sm.save_message(
+                    db,
+                    session_id,
+                    "tool",
+                    "",
+                    tool_name="draw_card",
+                    tool_result=tool_payload,
+                )
+                continue
             if not CARDS:
                 tool_payload = {"error": "Колода недоступна", "position_name": pos}
             else:
@@ -471,6 +514,24 @@ async def _handle_model_result(
 
             drawn_batch: list[dict[str, Any]] = []
             for pos in positions:
+                existing = _get_existing_drawn_for_position(db, session_id, pos)
+                if existing:
+                    hint = _rag_hint(existing["card_name"])
+                    sm.save_message(
+                        db,
+                        session_id,
+                        "tool",
+                        "",
+                        tool_name="draw_card",
+                        tool_result={
+                            "card_name": existing["card_name"],
+                            "is_reversed": bool(existing["is_reversed"]),
+                            "position_name": existing["position_name"],
+                            "meaning_hint": hint,
+                            "already_opened": True,
+                        },
+                    )
+                    continue
                 title, _rev = draw_random_card(CARDS)
                 rev = False
                 sm.save_drawn_card(db, session_id, pos, title, rev)
@@ -495,6 +556,8 @@ async def _handle_model_result(
             await _send_drawn_cards_live(message, drawn_batch)
             await _send_drawn_cards_summary(message, drawn_batch)
             clean_text = _strip_action_artifacts_for_user(display_text or "")
+            if not drawn_batch and positions:
+                await message.answer("Я уже открыла эти позиции и продолжаю трактовку.")
             if clean_text:
                 await message.answer(format_model_reply_for_telegram_html(clean_text))
             return
