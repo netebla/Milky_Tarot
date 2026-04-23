@@ -130,6 +130,32 @@ async def _send_drawn_cards_live(message: Message, drawn: list[dict[str, Any]]) 
             await message.answer(caption)
 
 
+async def _send_drawn_cards_summary(message: Message, drawn: list[dict[str, Any]]) -> None:
+    """Явно показать пользователю, какие карты выпали в этом ходе."""
+    if not drawn:
+        return
+    if len(drawn) == 1:
+        card = drawn[0]
+        title = html.escape(str(card.get("card_name") or "").strip() or "Неизвестная карта")
+        pos = html.escape(str(card.get("position_name") or "").strip())
+        if pos:
+            text = f"Выпавшая карта: <b>{title}</b>\nПозиция: {pos}"
+        else:
+            text = f"Выпавшая карта: <b>{title}</b>"
+        await message.answer(text)
+        return
+
+    lines = ["Выпавшие карты:"]
+    for idx, card in enumerate(drawn, start=1):
+        title = html.escape(str(card.get("card_name") or "").strip() or "Неизвестная карта")
+        pos = html.escape(str(card.get("position_name") or "").strip())
+        if pos:
+            lines.append(f"{idx}. <b>{title}</b> — {pos}")
+        else:
+            lines.append(f"{idx}. <b>{title}</b>")
+    await message.answer("\n".join(lines))
+
+
 def _system_prompt_for_session(user_id: int, db) -> str:
     mem = sm.load_user_memory(db, user_id)
     return build_system_prompt(mem)
@@ -357,6 +383,7 @@ async def _handle_model_result(
         is_propose_ui = action == "propose_spreads" and len(pending_after) > 0
         if not is_propose_ui:
             await _send_drawn_cards_live(message, drawn_this_turn)
+            await _send_drawn_cards_summary(message, drawn_this_turn)
 
         if action == "propose_spreads":
             db.refresh(session)
@@ -466,6 +493,7 @@ async def _handle_model_result(
                 )
 
             await _send_drawn_cards_live(message, drawn_batch)
+            await _send_drawn_cards_summary(message, drawn_batch)
             clean_text = _strip_action_artifacts_for_user(display_text or "")
             if clean_text:
                 await message.answer(format_model_reply_for_telegram_html(clean_text))
