@@ -29,7 +29,7 @@ from llm.rag import RAG_CARD_MEANINGS
 from utils.card_drawer import draw_random_card
 from utils.cards_loader import Card, load_cards
 from utils.admin_ids import is_admin as _is_admin
-from utils.db import DialogueSession, SessionLocal, User
+from utils.db import DialogueSession, DrawnCard, SessionLocal, User
 from utils import session_manager as sm
 
 logger = logging.getLogger(__name__)
@@ -224,6 +224,67 @@ def _apply_phase_metadata(db, session: DialogueSession, meta: dict[str, Any] | N
             sm.set_pending_spreads(db, session, spreads)
 
 
+def _spread_completion_stats(db, session: DialogueSession) -> tuple[int, int, list[str]]:
+    """
+    Вернуть (ожидаемо_позиций, уже_открыто_позиций, недостающие_позиции).
+
+    Если spread_positions не задан или пустой, expected будет 0 (нечего валидировать).
+    """
+    positions = session.spread_positions or {}
+    if not isinstance(positions, dict) or not positions:
+        return 0, 0, []
+
+    expected_names: list[str] = []
+    for key in sorted(positions.keys(), key=lambda x: str(x)):
+        value = positions.get(key)
+        pos_name = str(value or "").strip()
+        if not pos_name:
+            continue
+        expected_names.append(pos_name)
+    if not expected_names:
+        return 0, 0, []
+
+    opened_rows = (
+        db.query(DrawnCard.position_name)
+        .filter(DrawnCard.session_id == session.id)
+        .distinct()
+        .all()
+    )
+    opened = {str((row[0] if row else "") or "").strip() for row in opened_rows}
+    opened.discard("")
+
+    missing = [p for p in expected_names if p not in opened]
+    return len(expected_names), len(expected_names) - len(missing), missing
+
+
+def _extract_batch_request(meta: dict[str, Any] | None) -> tuple[int | None, list[str], str]:
+    """Разобрать action=draw_cards: (count, positions, spread_name)."""
+    if not meta or meta.get("action") != "draw_cards":
+        return None, [], ""
+    raw_count = meta.get("count")
+    try:
+        count = int(raw_count)
+    except (TypeError, ValueError):
+        return None, [], ""
+    if count < 1 or count > 15:
+        return None, [], ""
+
+    raw_positions = meta.get("positions")
+    positions: list[str] = []
+    if isinstance(raw_positions, list):
+        for p in raw_positions:
+            pos = str(p or "").strip()
+            if pos:
+                positions.append(pos)
+    if not positions:
+        positions = [f"Позиция {i}" for i in range(1, count + 1)]
+    if len(positions) != count:
+        return None, [], ""
+
+    spread_name = str(meta.get("spread_name") or "").strip()
+    return count, positions, spread_name
+
+
 async def _handle_model_result(
     message: Message,
     state: FSMContext,
@@ -327,7 +388,90 @@ async def _handle_model_result(
                 )
                 return
 
+        if action == "draw_cards":
+            count, positions, spread_name = _extract_batch_request(meta)
+            if count is None:
+                await message.answer(
+                    "Не смогла понять пакетный запрос карт. Уточни: сколько карт нужно вытянуть."
+                )
+                return
+            if not CARDS:
+                await message.answer("Колода недоступна.")
+                return
+
+            spread_positions = {str(i): name for i, name in enumerate(positions, start=1)}
+            spread_title = spread_name or f"Расклад на {count} карт"
+            sm.set_session_spread(db, session, spread_title, spread_positions)
+
+            drawn_batch: list[dict[str, Any]] = []
+            for pos in positions:
+                title, rev = draw_random_card(CARDS)
+                sm.save_drawn_card(db, session_id, pos, title, rev)
+                hint = _rag_hint(title)
+                sm.save_message(
+                    db,
+                    session_id,
+                    "tool",
+                    "",
+                    tool_name="draw_card",
+                    tool_result={
+                        "card_name": title,
+                        "is_reversed": rev,
+                        "position_name": pos,
+                        "meaning_hint": hint,
+                    },
+                )
+                drawn_batch.append(
+                    {"card_name": title, "is_reversed": rev, "position_name": pos}
+                )
+
+            await _send_drawn_cards_live(message, drawn_batch)
+            if display_text.strip():
+                await message.answer(format_model_reply_for_telegram_html(display_text.strip()))
+            return
+
         if action == "complete":
+            expected_cnt, opened_cnt, missing_positions = _spread_completion_stats(db, session)
+            if expected_cnt > 0 and opened_cnt < expected_cnt:
+                if auto_spread_depth >= _AUTO_SPREAD_CHAIN_MAX:
+                    await message.answer(
+                        "Пока не могу корректно дотянуть оставшиеся позиции. Напиши «дотяни оставшиеся карты»."
+                    )
+                    return
+                missing_json = json.dumps(missing_positions, ensure_ascii=False)
+                await message.answer(
+                    "Секунду — расклад ещё не полностью открыт. Сейчас дотяну оставшиеся позиции."
+                )
+                system_prompt = _system_prompt_for_session(user_id, db)
+                system_prompt += (
+                    f"\n\nТекущая фаза сессии в базе: {session.phase}. "
+                    "Ты попыталась завершить сессию раньше времени. "
+                    f"В этом раскладе ожидается {expected_cnt} позиций, открыто {opened_cnt}. "
+                    f"Недостающие позиции: {missing_json}. "
+                    "Сейчас не завершай сессию. "
+                    "Сначала вызови draw_card для каждой недостающей позиции (ровно по одному разу), "
+                    "потом дай краткую цельную интерпретацию всех позиций вместе. "
+                    "После этого только при необходимости верни action=complete."
+                )
+                try:
+                    display_text2, meta2, drawn2 = await _gemini_multi_round(db, session_id, system_prompt)
+                except GeminiClientError:
+                    logger.exception("Gemini error when forcing remaining spread positions")
+                    await message.answer("Не удалось связаться с Милки. Попробуй чуть позже.")
+                    return
+
+                await _handle_model_result(
+                    message,
+                    state,
+                    user_id,
+                    session_id,
+                    display_text2,
+                    meta2,
+                    drawn2,
+                    auto_spread_depth=auto_spread_depth + 1,
+                )
+                return
+
             memories = (meta or {}).get("memories") or []
             if not isinstance(memories, list):
                 memories = []

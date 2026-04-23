@@ -52,14 +52,24 @@ def build_system_prompt(user_memory_section: str) -> str:
         "0. Не используй Markdown-звёздочки (** или * вокруг слов) для «жирного» или курсива — в Telegram пользователь увидит сами звёздочки. "
         "Пиши обычным текстом; если очень нужно выделить мысль — формулировкой, без разметки.\n"
         "1. Никогда не объявляй \"расклад начат\" или \"позиция X означает Y\" как шаблон — говори живо, как в разговоре.\n"
-        "2. Карты: используй draw_card(position_name) по одной карте за вызов. "
+        "2. Карты: есть два режима.\n"
+        "   A) Пошаговый: используй draw_card(position_name) по одной карте за вызов.\n"
+        "   B) Пакетный (без доп. уточнений): верни JSON-декоратор draw_cards, чтобы бот сам вытянул N карт сразу:\n"
+        '      {"action":"draw_cards","count":5,"positions":["...","..."],"spread_name":"...","mode":"batch"}\n'
+        "      count — целое 1..15. positions — опционально, но если передаёшь, их число должно быть ровно count.\n"
+        "      В режиме draw_cards НЕ вызывай function tool draw_card в том же ответе.\n"
         "Если пользователь просит расклад на конкретное число карт (например «на 9 карт») или уже выбрана сетка из N позиций — "
-        "вытяни все N карт подряд (N вызовов draw_card с разными position_name), затем кратко пройдись по позициям; "
+        "предпочитай пакетный draw_cards, чтобы бот вытянул все N сразу без переспрашиваний; "
+        "затем кратко пройдись по позициям; "
         "не останавливайся на одной карте и не уходи в длинную болтовню до того, как открыты все запрошенные позиции, "
         "если человек явно хочет полный расклад. Если он просит «медленно, по одной с обсуждением» — тогда можно по шагам.\n"
         "3. Вопросы пользователю: не более одного уточняющего вопроса за сообщение. "
         "Если человек просит сразу перейти к картам («давай расклад», «на 9 карт», «без вопросов», «не хочу уточнять») — "
         "не переспрашивай и не навязывай уточнения; сразу строй позиции и тяни карты по теме, которая уже есть в диалоге.\n"
+        "3.1. Приоритет пакетного режима: если в реплике есть маркеры «сразу», «без вопросов», «пакетом», "
+        "«одним сообщением», «сразу N карт», «не переспрашивай», то выбирай action=draw_cards (mode=batch) "
+        "и не используй последовательный draw_card, кроме случаев, когда сам пользователь явно просит формат "
+        "«по одной карте» или «с паузами между картами».\n"
         "4. JSON propose_spreads — только если реально есть выбор из двух или трёх разных раскладов. "
         "Никогда не присылай один-единственный вариант в propose_spreads: при одном подходящем раскладе опиши позиции в тексте и "
         "сразу вызывай draw_card по ним (или дождись выбора, если ты правда дала 2–3 варианта). "
@@ -75,8 +85,10 @@ def build_system_prompt(user_memory_section: str) -> str:
         '   {"action": "complete", "memories": [{"type": "theme|pattern|preference|open_question|key_card", "content": "..."}]}\n'
         "Memories пиши живым языком от своего лица, как личные заметки — не сухие факты.\n"
         "Для open_question формулируй как вопрос, который ты сама хотела бы задать при следующей встрече.\n"
-        "8. Не вызывай draw_card в том же ходе, где отправляешь propose_spreads: сначала выбор расклада пользователем, потом карты.\n"
-        "9. В конце ответа можешь добавить короткое действие-подсказку (не обязательно).\n\n"
+        "8. Не смешивай action-декораторы в одном JSON: один ответ — один action.\n"
+        "9. Не вызывай draw_card в том же ходе, где отправляешь propose_spreads: сначала выбор расклада пользователем, потом карты.\n"
+        "10. В draw_cards при mode=batch не задавай дополнительных вопросов пользователю в этом же сообщении.\n"
+        "11. В конце ответа можешь добавить короткое действие-подсказку (не обязательно).\n\n"
         "КАК ИСПОЛЬЗОВАТЬ ПАМЯТЬ О ПОЛЬЗОВАТЕЛЕ:\n"
         "— Ты уже знаешь этого человека. Не представляйся заново и не перечисляй что ты о нём знаешь.\n"
         "— Веди себя так, как будто вы давно общаетесь: просто помни и учитывай.\n"
@@ -185,11 +197,11 @@ def extract_json_objects(text: str) -> list[dict[str, Any]]:
 
 
 def parse_action_metadata(text: str) -> dict[str, Any] | None:
-    """Выделить action propose_spreads | complete из последнего подходящего JSON."""
+    """Выделить action propose_spreads | draw_cards | complete из последнего подходящего JSON."""
     objs = extract_json_objects(text)
     for obj in reversed(objs):
         action = obj.get("action")
-        if action in ("propose_spreads", "complete"):
+        if action in ("propose_spreads", "draw_cards", "complete"):
             return obj
     return None
 
@@ -223,7 +235,7 @@ def strip_action_json_from_text(text: str) -> str:
             inner = m.group(1)
             try:
                 o = json.loads(inner)
-                if isinstance(o, dict) and o.get("action") in ("propose_spreads", "complete"):
+                if isinstance(o, dict) and o.get("action") in ("propose_spreads", "draw_cards", "complete"):
                     return ""
             except json.JSONDecodeError:
                 pass
@@ -234,7 +246,7 @@ def strip_action_json_from_text(text: str) -> str:
     s = _strip_fence(text)
     # Удалить «голый» JSON с action в конце сообщения
     for obj in extract_json_objects(s):
-        if obj.get("action") in ("propose_spreads", "complete"):
+        if obj.get("action") in ("propose_spreads", "draw_cards", "complete"):
             blob = json.dumps(obj, ensure_ascii=False)
             if blob in s:
                 s = s.replace(blob, "").strip()
@@ -247,6 +259,8 @@ def infer_phase_update(metadata: dict[str, Any] | None, current_phase: str) -> s
     action = metadata.get("action")
     if action == "propose_spreads":
         return "proposing_spread"
+    if action == "draw_cards":
+        return "dialogue_with_cards"
     if action == "complete":
         return "summary"
     return None
