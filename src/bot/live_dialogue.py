@@ -6,6 +6,7 @@ import html
 import json
 import logging
 import re
+import time
 from typing import Any
 
 import httpx
@@ -41,6 +42,7 @@ LIVE_BUTTON_TEXT = "Живой диалог 🌙"
 MAX_TOOL_ROUNDS = 22
 # Защита от бесконечной цепочки «один расклад → автопродолжение».
 _AUTO_SPREAD_CHAIN_MAX = 4
+IMAGE_FETCH_TIMEOUT_SEC = 4
 
 # Не трактовать нажатия главного меню как реплики диалога (обработают другие роутеры после выхода).
 _MAIN_MENU_TEXTS = frozenset(
@@ -73,11 +75,10 @@ def _rag_hint(card_title: str) -> str | None:
     return RAG_CARD_MEANINGS.get(t)
 
 
-async def _fetch_image_bytes(url: str) -> bytes:
-    async with httpx.AsyncClient(timeout=10) as client:
-        response = await client.get(url)
-        response.raise_for_status()
-        return response.content
+async def _fetch_image_bytes(url: str, client: httpx.AsyncClient) -> bytes:
+    response = await client.get(url)
+    response.raise_for_status()
+    return response.content
 
 
 def _card_by_title(title: str) -> Card | None:
@@ -114,42 +115,66 @@ async def _send_drawn_cards_live(message: Message, drawn: list[dict[str, Any]]) 
     """Отправить изображения только что вытянутых в этом ходе карт (как в раскладе «три карты»)."""
     if not drawn:
         return
-    for item in drawn:
-        title = (item.get("card_name") or "").replace("\ufeff", "").strip()
-        pos = (item.get("position_name") or "").strip()
-        rev = bool(item.get("is_reversed"))
-        card = _card_by_title(title)
-        rev_note = "\n(перевёрнутая)" if rev else ""
-        if pos:
-            caption = f"{html.escape(pos)}: {html.escape(title)}{rev_note}"
-        else:
-            caption = f"{html.escape(title)}{rev_note}"
-        if not card:
-            await message.answer(caption)
-            continue
-        sent = False
-        path = card.image_path()
-        if path.exists():
-            try:
-                await message.answer_photo(
-                    photo=BufferedInputFile(path.read_bytes(), filename=path.name),
-                    caption=caption,
-                )
-                sent = True
-            except TelegramBadRequest:
-                sent = False
-        if not sent:
-            try:
-                image_bytes = await _fetch_image_bytes(card.image_url())
-                await message.answer_photo(
-                    photo=BufferedInputFile(image_bytes, filename=f"{card.title}.jpg"),
-                    caption=caption,
-                )
-                sent = True
-            except (httpx.HTTPError, TelegramBadRequest, TelegramNetworkError):
-                sent = False
-        if not sent:
-            await message.answer(caption)
+    t0 = time.perf_counter()
+    sent_local = 0
+    sent_remote = 0
+    sent_text = 0
+    async with httpx.AsyncClient(timeout=IMAGE_FETCH_TIMEOUT_SEC) as client:
+        for item in drawn:
+            title = (item.get("card_name") or "").replace("\ufeff", "").strip()
+            pos = (item.get("position_name") or "").strip()
+            rev = bool(item.get("is_reversed"))
+            card = _card_by_title(title)
+            rev_note = "\n(перевёрнутая)" if rev else ""
+            if pos:
+                caption = f"{html.escape(pos)}: {html.escape(title)}{rev_note}"
+            else:
+                caption = f"{html.escape(title)}{rev_note}"
+
+            if not card:
+                await message.answer(caption)
+                sent_text += 1
+                continue
+            sent = False
+            path = card.image_path()
+            if path.exists():
+                try:
+                    await message.answer_photo(
+                        photo=BufferedInputFile(path.read_bytes(), filename=path.name),
+                        caption=caption,
+                    )
+                    sent = True
+                    sent_local += 1
+                except TelegramBadRequest:
+                    sent = False
+            if not sent:
+                fetch_t0 = time.perf_counter()
+                try:
+                    image_bytes = await _fetch_image_bytes(card.image_url(), client)
+                    await message.answer_photo(
+                        photo=BufferedInputFile(image_bytes, filename=f"{card.title}.jpg"),
+                        caption=caption,
+                    )
+                    sent = True
+                    sent_remote += 1
+                    logger.info(
+                        "live_dialogue image fetched remote card=%s in %.0fms",
+                        title,
+                        (time.perf_counter() - fetch_t0) * 1000,
+                    )
+                except (httpx.HTTPError, TelegramBadRequest, TelegramNetworkError):
+                    sent = False
+            if not sent:
+                await message.answer(caption)
+                sent_text += 1
+    logger.info(
+        "live_dialogue send_cards done count=%s local=%s remote=%s text=%s elapsed_ms=%.0f",
+        len(drawn),
+        sent_local,
+        sent_remote,
+        sent_text,
+        (time.perf_counter() - t0) * 1000,
+    )
 
 
 async def _send_drawn_cards_summary(message: Message, drawn: list[dict[str, Any]]) -> None:
@@ -191,12 +216,23 @@ async def _gemini_multi_round(
     display_parts: list[str] = []
     drawn_this_turn: list[dict[str, Any]] = []
 
+    round_idx = 0
+    t0 = time.perf_counter()
     for _ in range(MAX_TOOL_ROUNDS):
+        round_idx += 1
         history = sm.load_history(session_id, db)
+        call_t0 = time.perf_counter()
         try:
             result = await call_gemini(history, system_prompt)
         except GeminiClientError:
             raise
+        logger.info(
+            "live_dialogue gemini round=%s session_id=%s history=%s elapsed_ms=%.0f",
+            round_idx,
+            session_id,
+            len(history),
+            (time.perf_counter() - call_t0) * 1000,
+        )
 
         raw = result["raw_response"]
         text = result["text"] or ""
@@ -219,6 +255,12 @@ async def _gemini_multi_round(
                 display_parts.append(strip_action_json_from_text(text))
             break
 
+        logger.info(
+            "live_dialogue tool_calls round=%s session_id=%s count=%s",
+            round_idx,
+            session_id,
+            len(calls),
+        )
         for c in calls:
             if c.get("name") != "draw_card":
                 continue
@@ -270,6 +312,13 @@ async def _gemini_multi_round(
             )
 
     combined = "\n\n".join(p for p in display_parts if p.strip())
+    logger.info(
+        "live_dialogue multi_round done session_id=%s rounds=%s drawn=%s elapsed_ms=%.0f",
+        session_id,
+        round_idx,
+        len(drawn_this_turn),
+        (time.perf_counter() - t0) * 1000,
+    )
     return combined, last_meta, drawn_this_turn
 
 
@@ -646,6 +695,8 @@ async def _process_turn(message: Message, state: FSMContext, user_text: str) -> 
         await state.clear()
         return
 
+    turn_t0 = time.perf_counter()
+    logger.info("live_dialogue turn start user_id=%s text_len=%s", user_id, len(user_text))
     with SessionLocal() as db:
         session = db.get(DialogueSession, session_id)
         if not session or session.user_id != user_id or session.completed_at is not None:
@@ -666,13 +717,30 @@ async def _process_turn(message: Message, state: FSMContext, user_text: str) -> 
         system_prompt += f"\n\nТекущая фаза сессии в базе: {session.phase}. Следуй логике этой фазы."
 
         try:
+            gemini_t0 = time.perf_counter()
             display_text, meta, drawn = await _gemini_multi_round(db, session_id, system_prompt)
+            logger.info(
+                "live_dialogue turn gemini_done user_id=%s session_id=%s elapsed_ms=%.0f action=%s drawn=%s",
+                user_id,
+                session_id,
+                (time.perf_counter() - gemini_t0) * 1000,
+                (meta or {}).get("action"),
+                len(drawn),
+            )
         except GeminiClientError:
             logger.exception("Gemini error in live_dialogue")
             await message.answer("Не удалось связаться с Милки. Попробуй чуть позже.")
             return
 
+    handle_t0 = time.perf_counter()
     await _handle_model_result(message, state, user_id, session_id, display_text, meta, drawn)
+    logger.info(
+        "live_dialogue turn done user_id=%s session_id=%s handle_ms=%.0f total_ms=%.0f",
+        user_id,
+        session_id,
+        (time.perf_counter() - handle_t0) * 1000,
+        (time.perf_counter() - turn_t0) * 1000,
+    )
 
 
 def _ensure_user_row(db, user_id: int, username: str | None) -> None:
