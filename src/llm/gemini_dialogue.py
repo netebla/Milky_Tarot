@@ -40,14 +40,39 @@ DRAW_CARD_TOOL = types.Tool(
 )
 
 
-def build_system_prompt(user_memory_section: str) -> str:
+def build_system_prompt(
+    user_memory_section: str,
+    *,
+    reading_subject: str | None = None,
+) -> str:
     mem = user_memory_section.strip()
     if mem:
         mem_block = mem
     else:
         mem_block = ""
+
+    if reading_subject and reading_subject.strip():
+        subj = reading_subject.strip()
+        if "сам пользователь" in subj.lower() or subj.lower() in ("я", "пользователь"):
+            subject_block = (
+                "СУБЪЕКТ РАСКЛАДА: вопрос про самого спрашивающего. "
+                "Обращайся к нему/ней на «ты»; трактовку веди про его/её ситуацию.\n"
+            )
+        else:
+            subject_block = (
+                f"СУБЪЕКТ РАСКЛАДА: карты и трактовка — про {subj}, НЕ про спрашивающего как героя сюжета. "
+                f"К спрашивающему — на «ты» (он/она задаёт вопрос). О {subj} говори в третьем лице по именам "
+                f"({subj}), не подменяй их на «ты/вы с ...». Не пиши «вас ждёт», если речь о {subj}.\n"
+            )
+    else:
+        subject_block = (
+            "СУБЪЕКТ РАСКЛАДА: если в вопросе названы другие люди (имена) — читай карты на них; "
+            "к спрашивающему — «ты», о героях — по именам в третьем лице.\n"
+        )
+
     return (
         "Ты — Milky, живая таро-кошка. Ты ведёшь настоящий разговор, а не читаешь заранее написанный текст.\n\n"
+        f"{subject_block}\n"
         "ТВОИ ПРАВИЛА:\n"
         "0. Не используй Markdown-звёздочки (** или * вокруг слов) для «жирного» или курсива — в Telegram пользователь увидит сами звёздочки. "
         "Пиши обычным текстом; если очень нужно выделить мысль — формулировкой, без разметки.\n"
@@ -74,12 +99,13 @@ def build_system_prompt(user_memory_section: str) -> str:
         "и не используй последовательный draw_card, кроме случаев, когда сам пользователь явно просит формат "
         "«по одной карте» или «с паузами между картами».\n"
         "4. JSON propose_spreads — только если реально есть выбор из двух или трёх разных раскладов. "
-        "Никогда не присылай один-единственный вариант в propose_spreads: при одном подходящем раскладе опиши позиции в тексте и "
-        "сразу вызывай draw_card по ним (или дождись выбора, если ты правда дала 2–3 варианта). "
-        "В каждом элементе spreads поле positions — обязательно словарь вида {\"1\": \"название позиции\", ...} "
-        "с непустыми значениями для всех позиций; не оставляй positions пустым и не пиши во вступлении список позиций с двоеточием, "
-        "если дальше не перечисляешь их явно в том же сообщении.\n"
-        "   Формат при нескольких вариантах:\n"
+        "Никогда не используй propose_spreads с одним вариантом: при одном раскладе опиши позиции в живом тексте "
+        "и сразу верни action=draw_cards с полным списком positions (пакетно). "
+        "Во вступлении к propose_spreads обязательно назови каждый вариант и перечисли позиции — "
+        "не пиши «такой расклад» без названия и позиций. "
+        "В каждом элементе spreads поле positions — обязательно словарь {\"1\": \"название\", ...} "
+        "с непустыми значениями.\n"
+        "   Формат при 2–3 вариантах:\n"
         '   {"action": "propose_spreads", "spreads": [{"name": "...", "positions": {"1": "..."}, "why": "..."}]}\n'
         "5. Не путай названия классических раскладов с числом карт: классический Кельтский крест — 10 позиций, не 9. "
         "Для девяти карт используй корректное имя (например сетка 3×3 / девять позиций) и ровно 9 позиций в positions.\n"
@@ -91,9 +117,13 @@ def build_system_prompt(user_memory_section: str) -> str:
         "8. Не смешивай action-декораторы в одном JSON: один ответ — один action.\n"
         "9. Не вызывай draw_card в том же ходе, где отправляешь propose_spreads: сначала выбор расклада пользователем, потом карты.\n"
         "10. В draw_cards при mode=batch не задавай дополнительных вопросов пользователю в этом же сообщении.\n"
-        "11. В конце ответа можешь добавить короткое действие-подсказку (не обязательно).\n\n"
+        "11. После ответа без расклада (фаза сбора контекста) часто предлагай 2–3 коротких вопроса на выбор — "
+        "отдельным JSON (после текста):\n"
+        '   {"action": "suggest_questions", "questions": ["...", "...", "..."]}\n'
+        "Вопросы — про тему пользователя, не общие. Не дублируй их длинным списком в тексте, если отдал JSON.\n\n"
         "КАК ИСПОЛЬЗОВАТЬ ПАМЯТЬ О ПОЛЬЗОВАТЕЛЕ:\n"
-        "— Ты уже знаешь этого человека. Не представляйся заново и не перечисляй что ты о нём знаешь.\n"
+        "— Память относится к спрашивающему в чате, не подменяй ею субъект расклада (другие люди из вопроса).\n"
+        "— Не представляйся заново и не перечисляй что ты о нём знаешь.\n"
         "— Веди себя так, как будто вы давно общаетесь: просто помни и учитывай.\n"
         "— Если есть незакрытый вопрос (open_question) из прошлой сессии — можешь спросить о нём сама, "
         "когда почувствуешь подходящий момент. Не в первом же сообщении, не по обязанности.\n"
@@ -204,7 +234,7 @@ def parse_action_metadata(text: str) -> dict[str, Any] | None:
     objs = extract_json_objects(text)
     for obj in reversed(objs):
         action = obj.get("action")
-        if action in ("propose_spreads", "draw_cards", "complete"):
+        if action in ("propose_spreads", "draw_cards", "complete", "suggest_questions"):
             return obj
     return None
 
@@ -238,7 +268,12 @@ def strip_action_json_from_text(text: str) -> str:
             inner = m.group(1)
             try:
                 o = json.loads(inner)
-                if isinstance(o, dict) and o.get("action") in ("propose_spreads", "draw_cards", "complete"):
+                if isinstance(o, dict) and o.get("action") in (
+                    "propose_spreads",
+                    "draw_cards",
+                    "complete",
+                    "suggest_questions",
+                ):
                     return ""
             except json.JSONDecodeError:
                 pass
@@ -249,20 +284,20 @@ def strip_action_json_from_text(text: str) -> str:
     s = _strip_fence(text)
     # Удалить «голый» JSON с action в конце сообщения
     for obj in extract_json_objects(s):
-        if obj.get("action") in ("propose_spreads", "draw_cards", "complete"):
+        if obj.get("action") in ("propose_spreads", "draw_cards", "complete", "suggest_questions"):
             blob = json.dumps(obj, ensure_ascii=False)
             if blob in s:
                 s = s.replace(blob, "").strip()
     # Удалить хвостовой JSON action даже если форматирование/пробелы отличаются.
     s = re.sub(
-        r"\s*\{\s*\"action\"\s*:\s*\"(?:propose_spreads|draw_cards|complete)\"[\s\S]*\}\s*$",
+        r"\s*\{\s*\"action\"\s*:\s*\"(?:propose_spreads|draw_cards|complete|suggest_questions)\"[\s\S]*\}\s*$",
         "",
         s,
         flags=re.IGNORECASE,
     ).strip()
     # Удалить однострочные action-json где угодно в тексте.
     s = re.sub(
-        r"\{\s*\"action\"\s*:\s*\"(?:propose_spreads|draw_cards|complete)\"[^\n]*\}",
+        r"\{\s*\"action\"\s*:\s*\"(?:propose_spreads|draw_cards|complete|suggest_questions)\"[^\n]*\}",
         "",
         s,
         flags=re.IGNORECASE,

@@ -17,7 +17,7 @@ from utils.push import send_main_menu_refresh_all, send_push_card
 from utils.db import SessionLocal, User
 from utils import session_manager as dialogue_sm
 from .handlers import router as handlers_router
-from .live_dialogue import router as live_dialogue_router
+from .live_dialogue import LiveDialogueMenuExitMiddleware, router as live_dialogue_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -109,6 +109,8 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher(storage=MemoryStorage())
+    dp.message.middleware(LiveDialogueMenuExitMiddleware())
+    dp.callback_query.middleware(LiveDialogueMenuExitMiddleware())
 
     # Инициализация общего состояния ДО старта поллинга
     loop = asyncio.get_running_loop()

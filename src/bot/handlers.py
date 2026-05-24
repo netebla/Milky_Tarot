@@ -427,6 +427,12 @@ async def cb_fish_topup(cb: CallbackQuery, state: FSMContext) -> None:
 @router.message(F.text == "Главное меню")
 async def msg_main_menu_from_anywhere(message: Message, state: FSMContext) -> None:
     """Позволяет вернуться в главное меню с любой сцены FSM."""
+    if message.from_user:
+        from utils import session_manager as dialogue_sm
+        from utils.db import SessionLocal
+
+        with SessionLocal() as db:
+            dialogue_sm.abandon_active_session_for_user(db, message.from_user.id)
     await state.clear()
     await message.answer(
         "Готово. Чем займёмся?",

@@ -38,6 +38,22 @@ def test_infer_phase() -> None:
     assert infer_phase_update(None, "x") is None
 
 
+def test_parse_suggest_questions() -> None:
+    text = '{"action": "suggest_questions", "questions": ["А?", "Б?"]}'
+    meta = parse_action_metadata(text)
+    assert meta is not None
+    assert meta["action"] == "suggest_questions"
+    assert len(meta["questions"]) == 2
+
+
+def test_build_system_prompt_reading_subject() -> None:
+    from llm.gemini_dialogue import build_system_prompt
+
+    p = build_system_prompt("", reading_subject="Кирюша и Катя")
+    assert "Кирюша и Катя" in p
+    assert "третьем лице" in p
+
+
 def test_history_to_contents_roundtrip() -> None:
     hist = [
         {"role": "user", "text": "Привет"},

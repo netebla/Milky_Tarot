@@ -118,4 +118,5 @@ jobs:
             docker compose -f docker-compose.prod.yml up -d
             echo "DB: после изменения схемы применить миграцию (один раз):"
             echo "  cd ~/apps/milky_tarot && docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d tarot_db < migrations/001_live_dialogue.sql"
+            echo "  cd ~/apps/milky_tarot && docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d tarot_db < migrations/002_live_dialogue_reading_subject.sql"
             echo "  (файл также внутри образа бота: /app/migrations/001_live_dialogue.sql)"

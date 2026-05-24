@@ -67,6 +67,8 @@ class DialogueSession(Base):
     spread_type = Column(String, nullable=True)
     spread_positions = Column(JSONB, nullable=True)
     pending_spreads = Column(JSONB, nullable=True)
+    # На кого направлен расклад (имена из вопроса или «сам пользователь»)
+    reading_subject = Column(String, nullable=True)
     fish_cost = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)

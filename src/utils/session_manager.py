@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from typing import Any, List, Optional
 
@@ -30,6 +33,21 @@ LIVE_DIALOGUE_PRICE_FISH = 150
 MAX_USER_MESSAGES_PER_SESSION = 20
 SESSION_STALE_HOURS = 24
 
+_session_locks: dict[int, asyncio.Lock] = {}
+
+# Маркеры вопроса «про других людей», не про спрашивающего
+_THIRD_PARTY_MARKERS = re.compile(
+    r"(?:"
+    r"что\s+(?:жд[её]т|будет|будет\s+с|ждут|жд[её]т\s+у)"
+    r"|расклад\s+(?:на|про|для)"
+    r"|про\s+(?:него|неё|них|тебя\s+и|моего|мою|моих)"
+    r"|как\s+(?:у|с)\s+"
+    r"|между\s+"
+    r"|у\s+\w+"
+    r")",
+    re.IGNORECASE,
+)
+
 
 def get_active_session(db: Session, user_id: int) -> Optional[DialogueSession]:
     return (
@@ -41,14 +59,104 @@ def get_active_session(db: Session, user_id: int) -> Optional[DialogueSession]:
 
 
 def get_or_create_session(db: Session, user_id: int) -> DialogueSession:
+    """Устаревший путь: предпочитай create_fresh_session / get_active_session."""
     active = get_active_session(db, user_id)
     if active:
         return active
+    return create_fresh_session(db, user_id)
+
+
+def create_fresh_session(db: Session, user_id: int) -> DialogueSession:
+    """Новая изолированная сессия (история только внутри неё)."""
     sess = DialogueSession(user_id=user_id, phase=PHASE_COLLECTING)
     db.add(sess)
     db.commit()
     db.refresh(sess)
     return sess
+
+
+def session_has_user_messages(db: Session, session_id: int) -> bool:
+    return count_user_messages(db, session_id) > 0
+
+
+def abandon_active_session_for_user(db: Session, user_id: int) -> int:
+    """Закрыть все незавершённые сессии пользователя без списания. Возвращает число закрытых."""
+    active_list = (
+        db.query(DialogueSession)
+        .filter(DialogueSession.user_id == user_id, DialogueSession.completed_at.is_(None))
+        .all()
+    )
+    for s in active_list:
+        abandon_session_no_charge(db, s)
+    return len(active_list)
+
+
+@asynccontextmanager
+async def session_turn_lock(session_id: int):
+    """Сериализация ходов одной сессии (защита от гонок при быстрых сообщениях)."""
+    if session_id not in _session_locks:
+        _session_locks[session_id] = asyncio.Lock()
+    async with _session_locks[session_id]:
+        yield
+
+
+def set_reading_subject(db: Session, session: DialogueSession, subject: str | None) -> None:
+    session.reading_subject = (subject or "").strip() or None
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+
+
+def infer_reading_subject_from_text(text: str) -> str | None:
+    """
+    Эвристика: извлечь субъект расклада из реплики пользователя (имена / «X и Y»).
+    Возвращает None, если вопрос явно про самого спрашивающего.
+    """
+    raw = (text or "").strip()
+    if not raw or len(raw) < 8:
+        return None
+    lower = raw.lower()
+    if not _THIRD_PARTY_MARKERS.search(lower):
+        # «моя работа», «меня ждёт» — про пользователя
+        if re.search(r"\b(?:меня|мне|мой|моя|моё|мои|у\s+меня|для\s+меня)\b", lower):
+            return None
+        return None
+
+    # «что ждёт Кирюшу и Катю»
+    m = re.search(
+        r"(?:что\s+(?:жд[её]т|будет)|расклад\s+(?:на|про|для)|про)\s+(.+?)(?:\?|$)",
+        raw,
+        re.IGNORECASE,
+    )
+    if m:
+        chunk = m.group(1).strip().rstrip("?.!")
+        chunk = re.sub(r"\s+и\s+как\b.*", "", chunk, flags=re.IGNORECASE)
+        if len(chunk) >= 2 and not re.match(r"^(меня|мне|мой|моя|моё|мои)\b", chunk, re.I):
+            return chunk[:200]
+
+    # «Кирюша и Катя» в середине фразы
+    m2 = re.search(
+        r"([А-ЯЁA-Z][а-яёa-z]+(?:\s+[А-ЯЁA-Z][а-яёa-z]+)?)\s+и\s+([А-ЯЁA-Z][а-яёa-z]+)",
+        raw,
+    )
+    if m2:
+        return f"{m2.group(1)} и {m2.group(2)}"[:200]
+
+    return None
+
+
+def update_reading_subject_from_user_text(
+    db: Session, session: DialogueSession, user_text: str
+) -> None:
+    inferred = infer_reading_subject_from_text(user_text)
+    if inferred:
+        set_reading_subject(db, session, inferred)
+    elif re.search(
+        r"\b(?:меня|мне|мой|моя|моё|мои|у\s+меня|для\s+меня|моей\s+жизни)\b",
+        user_text or "",
+        re.IGNORECASE,
+    ):
+        set_reading_subject(db, session, "сам пользователь (спрашивающий)")
 
 
 def count_user_messages(db: Session, session_id: int) -> int:
