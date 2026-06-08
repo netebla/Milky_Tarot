@@ -16,7 +16,7 @@ services:
       - HTTP_PROXY=${PROXY_URL:-}
       - HTTPS_PROXY=${PROXY_URL:-}
       - ALL_PROXY=${PROXY_URL:-}
-      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,db,tarot_db,postgres,redis}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,db,tarot_db,postgres,redis,api.yookassa.ru,yookassa.ru}
       - TZ=${TZ:-Europe/Moscow}
     restart: unless-stopped
 
@@ -33,6 +33,12 @@ services:
       - YOOKASSA_SHOP_ID=${YOOKASSA_SHOP_ID}
       - YOOKASSA_SECRET_KEY=${YOOKASSA_SECRET_KEY}
       - YOOKASSA_RETURN_URL=${YOOKASSA_RETURN_URL:-https://t.me/Milky_Tarot_Bot}
+      - PROXY_ENABLED=${PROXY_ENABLED:-false}
+      - PROXY_URL=${PROXY_URL:-}
+      - HTTP_PROXY=${PROXY_URL:-}
+      - HTTPS_PROXY=${PROXY_URL:-}
+      - ALL_PROXY=${PROXY_URL:-}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,db,tarot_db,postgres,redis,api.yookassa.ru,yookassa.ru}
       - TZ=${TZ:-Europe/Moscow}
     restart: unless-stopped
 

@@ -6,6 +6,10 @@ import os
 import signal
 from datetime import datetime, timedelta
 
+from utils.proxy import configure_process_proxy, create_aiogram_session
+
+configure_process_proxy()
+
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -106,6 +110,7 @@ async def on_shutdown(bot: Bot) -> None:
 async def main() -> None:
     bot = Bot(
         token=BOT_TOKEN,
+        session=create_aiogram_session(),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher(storage=MemoryStorage())

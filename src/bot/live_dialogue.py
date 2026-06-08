@@ -436,10 +436,11 @@ async def _gemini_multi_round(
             break
 
         logger.info(
-            "live_dialogue tool_calls round=%s session_id=%s count=%s",
+            "live_dialogue tool_calls round=%s session_id=%s count=%s names=%s",
             round_idx,
             session_id,
             len(calls),
+            [c.get("name") for c in calls],
         )
         for c in calls:
             if c.get("name") != "draw_card":
@@ -492,14 +493,57 @@ async def _gemini_multi_round(
             )
 
     combined = "\n\n".join(p for p in display_parts if p.strip())
+    if not combined.strip() and not last_meta and not drawn_this_turn:
+        logger.warning(
+            "live_dialogue empty reply after multi_round session_id=%s rounds=%s",
+            session_id,
+            round_idx,
+        )
     logger.info(
-        "live_dialogue multi_round done session_id=%s rounds=%s drawn=%s elapsed_ms=%.0f",
+        "live_dialogue multi_round done session_id=%s rounds=%s drawn=%s text_len=%s elapsed_ms=%.0f",
         session_id,
         round_idx,
         len(drawn_this_turn),
+        len(combined),
         (time.perf_counter() - t0) * 1000,
     )
     return combined, last_meta, drawn_this_turn
+
+
+_EMPTY_REPLY_FALLBACK = (
+    "Слышу тебя. Расскажи чуть подробнее — или напиши «давай расклад», и я предложу варианты."
+)
+
+
+async def _recover_empty_model_reply(
+    db, session_id: int, system_prompt: str
+) -> tuple[str, dict[str, Any] | None]:
+    """Повторный вызов, если модель вернула только tool call или пустой текст."""
+    recovery_prompt = (
+        f"{system_prompt}\n\n"
+        "Система: предыдущий ответ не дошёл до пользователя (пустой текст). "
+        "Ответь на последнюю реплику пользователя живым текстом на русском. "
+        "Не вызывай draw_card. JSON action — только suggest_questions, если уместны 2–3 коротких вопроса."
+    )
+    history = sm.load_history(session_id, db)
+    result = await call_gemini(history, recovery_prompt)
+    text = strip_action_json_from_text(result["text"] or "")
+    meta = result["metadata"]
+    ap = assistant_payload_from_response(result["raw_response"], result["text"] or "", result["tool_calls"])
+    sm.save_message(
+        db,
+        session_id,
+        "assistant",
+        ap["content"],
+        model_function_calls=ap["model_function_calls"],
+    )
+    logger.info(
+        "live_dialogue empty_reply_recovery session_id=%s text_len=%s action=%s",
+        session_id,
+        len(text),
+        (meta or {}).get("action"),
+    )
+    return text, meta
 
 
 def _spreads_keyboard(session_id: int, spreads: list[dict[str, Any]]) -> InlineKeyboardMarkup:
@@ -813,7 +857,14 @@ async def _handle_model_result(
             return
 
         clean_body = _strip_action_artifacts_for_user(display_text or "")
-        body = format_model_reply_for_telegram_html(clean_body.strip() or "…")
+        if not clean_body.strip():
+            logger.warning(
+                "live_dialogue sending fallback user_id=%s session_id=%s action=%s",
+                user_id,
+                session_id,
+                (meta or {}).get("action"),
+            )
+        body = format_model_reply_for_telegram_html(clean_body.strip() or _EMPTY_REPLY_FALLBACK)
         await message.answer(body)
 
 
@@ -855,6 +906,11 @@ async def _process_turn(message: Message, state: FSMContext, user_text: str) -> 
 
             system_prompt = _system_prompt_for_session(user_id, db, session)
             system_prompt += f"\n\nТекущая фаза сессии в базе: {session.phase}. Следуй логике этой фазы."
+            if session.phase == sm.PHASE_COLLECTING:
+                system_prompt += (
+                    "\nНа фазе collecting_context сначала ответь живым текстом (услышь человека). "
+                    "Не вызывай draw_card в этом ходе, если пользователь не просил «сразу карты» / «давай расклад»."
+                )
 
             async def _run_gemini():
                 return await _gemini_multi_round(db, session_id, system_prompt)
@@ -862,6 +918,10 @@ async def _process_turn(message: Message, state: FSMContext, user_text: str) -> 
             try:
                 gemini_t0 = time.perf_counter()
                 display_text, meta, drawn = await _typing_while(_run_gemini(), message)
+                if not (display_text or "").strip() and not meta and not drawn:
+                    display_text, meta = await _recover_empty_model_reply(
+                        db, session_id, system_prompt
+                    )
                 logger.info(
                     "live_dialogue turn gemini_done user_id=%s session_id=%s elapsed_ms=%.0f action=%s drawn=%s",
                     user_id,

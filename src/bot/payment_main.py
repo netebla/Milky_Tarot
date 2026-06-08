@@ -11,6 +11,10 @@ import asyncio
 import logging
 import os
 
+from utils.proxy import configure_process_proxy, create_aiogram_session
+
+configure_process_proxy()
+
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -33,6 +37,7 @@ async def main() -> None:
     """
     bot = Bot(
         token=PAYMENT_BOT_TOKEN,
+        session=create_aiogram_session(),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher(storage=MemoryStorage())
