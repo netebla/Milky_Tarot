@@ -63,7 +63,7 @@ session.query(Payment).filter(Payment.id == payment_db_id).first()
 **Проверенные секреты:**
 - `BOT_TOKEN`
 - `PAYMENT_BOT_TOKEN`
-- `GEMINI_API_KEY`
+- `OPENROUTER_API_KEY`
 - `YOOKASSA_SHOP_ID`
 - `YOOKASSA_SECRET_KEY`
 
@@ -156,4 +156,3 @@ if payment.user_id != user.id:
    - Валидации входных данных
 
 3. **Документация:** Рекомендуется задокументировать процесс обработки платежей и меры безопасности для будущих разработчиков.
-

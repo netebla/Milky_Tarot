@@ -1,6 +1,6 @@
 # Milky Tarot Bot
 
-Telegram-бот с раскладами Таро, оплатой через ЮKassa и LLM-интерпретациями (Gemini).
+Telegram-бот с раскладами Таро, оплатой через ЮKassa и LLM-интерпретациями через OpenRouter.
 
 ## Быстрый старт (локально, Docker)
 
@@ -23,7 +23,7 @@ docker logs -f tarot_bot
 - `src/bot/payment_main.py` — точка входа payment-бота.
 - `src/bot/handlers.py` — основные пользовательские сценарии и расклады.
 - `src/bot/payment_handlers.py` — сценарии оплат и проверка статуса платежа.
-- `src/llm/client.py` — клиент LLM (Gemini), включая обработку ошибок.
+- `src/llm/client.py` — клиент LLM (OpenRouter), включая обработку ошибок.
 - `src/llm/three_cards.py` — генерация трактовки для расклада из 3 карт.
 - `src/llm/rag.py` — сборка дополнительного контекста по картам.
 - `src/utils/db.py` — модели БД (`User`, `Payment` и др.).
@@ -53,18 +53,12 @@ docker logs -f tarot_bot
 
 - `TZ` (по умолчанию `Europe/Moscow`)
 - `YOOKASSA_RETURN_URL` (по умолчанию `https://t.me/Milky_Tarot_Bot`)
-- `GEMINI_API_KEY`
-- `GEMINI_MODEL` (например, `gemini-2.5-flash`)
+- `OPENROUTER_API_KEY`
+- `OPENROUTER_MODEL` (по умолчанию `deepseek/deepseek-v4-flash`)
 
-## Прокси для Gemini и внешних HTTP-запросов
+## Прокси для OpenRouter и внешних HTTP-запросов
 
-Если на сервере возникает ошибка:
-
-`400 FAILED_PRECONDITION: User location is not supported for the API use`
-
-это почти всегда означает неподдерживаемую геолокацию исходящего IP для Gemini API.
-
-Рекомендуемый временный workaround: отправлять весь outbound HTTP/HTTPS трафик контейнера через прокси.
+Если серверу нужен прокси для доступа к внешним сервисам, задайте `PROXY_ENABLED=true` и `PROXY_URL`:
 
 В `docker-compose*.yml` у сервиса бота:
 
@@ -130,10 +124,11 @@ Secrets (базово):
 
 - `SSH_HOST`, `SSH_USER`, `SSH_KEY`, `SSH_PORT`
 - `BOT_TOKEN`, `ADMIN_ID`
+- `OPENROUTER_API_KEY`
 - `PAYMENT_BOT_TOKEN`
 - `YOOKASSA_SHOP_ID`, `YOOKASSA_SECRET_KEY`, `YOOKASSA_RETURN_URL`
 
-## Быстрая диагностика Gemini
+## Быстрая диагностика OpenRouter
 
 1. Проверить, что в контейнере заданы прокси-переменные:
 

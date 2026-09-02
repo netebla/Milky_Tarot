@@ -1,100 +1,115 @@
-"""Клиент для взаимодействия с Google Gemini через пакет google-genai."""
+"""Клиент LLM через OpenRouter."""
 
 from __future__ import annotations
 
 import asyncio
-import os
 import logging
-from typing import Optional
+import os
+from typing import Any
 
-from google import genai
+import httpx
 
-from utils.proxy import configure_process_proxy, get_proxy_url, mask_proxy_url
+from utils.proxy import configure_process_proxy, get_proxy_url
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+# DeepSeek V4 Flash: сильная модель для текста и reasoning с низкой стоимостью.
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL") or "deepseek/deepseek-v4-flash"
+OPENROUTER_TIMEOUT_SECONDS = float(os.getenv("OPENROUTER_TIMEOUT_SECONDS") or "90")
 
 PROXY_URL = get_proxy_url()
 PROXY_ENABLED = bool(PROXY_URL)
 
-_client: Optional[genai.Client] = None
-_client_lock = asyncio.Lock()
-
 logger = logging.getLogger(__name__)
 
 
-class GeminiClientError(RuntimeError):
-    """Ошибки взаимодействия с Google Gemini."""
+class OpenRouterClientError(RuntimeError):
+    """Ошибки взаимодействия с OpenRouter."""
 
 
 def _get_api_key() -> str:
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
-        raise GeminiClientError(
-            "GEMINI_API_KEY не задан. Передайте ключ через переменные окружения (секрет CI/CD)."
+        raise OpenRouterClientError(
+            "OPENROUTER_API_KEY не задан. Передайте ключ через переменные окружения (секрет CI/CD)."
         )
     return api_key
 
 
-async def get_genai_client() -> genai.Client:
-    """Публичная обёртка для кода, которому нужен низкоуровневый клиент (чат, tools)."""
-    return await _get_client()
-
-
-async def _get_client() -> genai.Client:
-    global _client
-    if _client is not None:
-        return _client
-
-    async with _client_lock:
-        if _client is None:
-            configure_process_proxy()
-            if PROXY_ENABLED:
-                logger.info("Gemini client proxy enabled: %s", mask_proxy_url(PROXY_URL))
-            else:
-                logger.info("Gemini client proxy disabled")
-
-            _client = genai.Client(
-                api_key=_get_api_key(),
+def _invoke_chat_completion(payload: dict[str, Any]) -> dict[str, Any]:
+    """Синхронный HTTP-вызов, который запускается в отдельном потоке."""
+    configure_process_proxy()
+    proxy_info = " (через прокси)" if PROXY_ENABLED else ""
+    try:
+        with httpx.Client(timeout=OPENROUTER_TIMEOUT_SECONDS, trust_env=True) as client:
+            response = client.post(
+                OPENROUTER_API_URL,
+                headers={
+                    "Authorization": f"Bearer {_get_api_key()}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
             )
-            logger.info("Gemini client initialized with model %s", GEMINI_MODEL)
-    return _client
+            response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text[:500]
+        logger.exception("OpenRouter returned HTTP %s%s", exc.response.status_code, proxy_info)
+        raise OpenRouterClientError(
+            f"Ошибка OpenRouter HTTP {exc.response.status_code}{proxy_info}: {detail}"
+        ) from exc
+    except httpx.HTTPError as exc:
+        logger.exception("OpenRouter request failed%s", proxy_info)
+        raise OpenRouterClientError(f"Ошибка обращения к OpenRouter{proxy_info}: {exc}") from exc
+
+    try:
+        data = response.json()
+    except ValueError as exc:
+        logger.exception("OpenRouter returned invalid JSON")
+        raise OpenRouterClientError("OpenRouter вернул некорректный ответ") from exc
+
+    if not isinstance(data, dict):
+        raise OpenRouterClientError("OpenRouter вернул ответ неожиданного формата")
+    return data
+
+
+async def chat_completion(
+    messages: list[dict[str, Any]],
+    *,
+    system_prompt: str | None = None,
+    tools: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Выполнить совместимый с OpenAI Chat Completions запрос к OpenRouter."""
+    request_messages: list[dict[str, Any]] = []
+    if system_prompt:
+        request_messages.append({"role": "system", "content": system_prompt})
+    request_messages.extend(messages)
+
+    payload: dict[str, Any] = {
+        "model": OPENROUTER_MODEL,
+        "messages": request_messages,
+    }
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
+
+    logger.info(
+        "Sending prompt to OpenRouter (model=%s, messages=%d, tools=%s)",
+        OPENROUTER_MODEL,
+        len(request_messages),
+        bool(tools),
+    )
+    response = await asyncio.to_thread(_invoke_chat_completion, payload)
+    logger.info("OpenRouter response received (model=%s)", OPENROUTER_MODEL)
+    return response
 
 
 async def ask_llm(prompt: str) -> str:
-    """Отправить запрос в Gemini и вернуть текстовый ответ."""
+    """Отправить запрос в OpenRouter и вернуть текстовый ответ."""
+    response = await chat_completion([{"role": "user", "content": prompt}])
+    choices = response.get("choices") or []
+    message = choices[0].get("message") if choices and isinstance(choices[0], dict) else None
+    text = message.get("content") if isinstance(message, dict) else None
+    if isinstance(text, str) and text.strip():
+        return text.strip()
 
-    client = await _get_client()
-
-    def _invoke() -> str:
-        try:
-            logger.info(
-                "Sending prompt to Gemini (model=%s, length=%d)",
-                GEMINI_MODEL,
-                len(prompt),
-            )
-            response = client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=prompt,
-            )
-        except Exception as exc:
-            proxy_info = " (через прокси)" if PROXY_ENABLED else ""
-            logger.exception("Gemini call failed%s", proxy_info)
-            raise GeminiClientError(f"Ошибка обращения к Gemini{proxy_info}: {exc}") from exc
-
-        text = getattr(response, "text", None)
-        if text:
-            logger.info("Gemini response received (length=%d)", len(text))
-            return text
-
-        candidates = getattr(response, "candidates", None) or []
-        for candidate in candidates:
-            content = getattr(candidate, "content", None)
-            parts = getattr(content, "parts", None) or []
-            joined = "".join(getattr(part, "text", "") for part in parts if getattr(part, "text", None))
-            if joined:
-                logger.info("Gemini response composed from parts (length=%d)", len(joined))
-                return joined
-        logger.error("Gemini response contained no text parts")
-        raise GeminiClientError("В ответе Gemini отсутствует текстовая часть")
-
-    return await asyncio.to_thread(_invoke)
+    logger.error("OpenRouter response contained no text content")
+    raise OpenRouterClientError("В ответе OpenRouter отсутствует текстовая часть")

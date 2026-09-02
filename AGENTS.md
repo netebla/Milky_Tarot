@@ -9,7 +9,7 @@ This file is a compact operational guide for AI agents and new contributors.
 - card readings;
 - premium flows paid with internal currency (`fish_balance`);
 - payment integration via YooKassa;
-- LLM-based interpretations (Gemini).
+- LLM-based interpretations (OpenRouter).
 
 ## Runtime Topology
 
@@ -41,13 +41,11 @@ This file is a compact operational guide for AI agents and new contributors.
 - LLM failures must not crash update processing; handlers should return user-safe fallback text.
 - Admin-only flows must always check admin permissions.
 
-## LLM/Gemini Notes
+## LLM/OpenRouter Notes
 
-- LLM calls are centralized in `src/llm/client.py`.
-- Geography restrictions can produce:
-  - `400 FAILED_PRECONDITION`
-  - `"User location is not supported for the API use."`
-- If this happens in production, verify outbound proxy env (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`) for the bot container.
+- LLM calls are centralized in `src/llm/client.py` and use `OPENROUTER_API_KEY`.
+- Default model: `deepseek/deepseek-v4-flash`; override with `OPENROUTER_MODEL` when required.
+- If OpenRouter is unavailable from production, verify outbound proxy env (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`) for the bot container.
 
 ## Database Notes
 
@@ -65,7 +63,7 @@ When changing payment or premium logic, validate SQL schema compatibility.
 1. Read affected handler + utility + DB model files.
 2. Search for callback/data key reuse before adding new callbacks.
 3. Keep user-facing Russian text consistent with existing style.
-4. Add/adjust logs near external integrations (Gemini, YooKassa).
+4. Add/adjust logs near external integrations (OpenRouter, YooKassa).
 5. Run quick smoke checks:
    - imports and startup
    - payment status check path
@@ -76,4 +74,3 @@ When changing payment or premium logic, validate SQL schema compatibility.
 - CI/CD workflow deploys via SSH and docker compose.
 - Keep `.env.example` and README in sync with required runtime env vars.
 - Avoid introducing hidden runtime assumptions; document all new env vars.
-

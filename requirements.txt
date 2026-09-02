@@ -5,6 +5,6 @@ pytz==2024.1
 SQLAlchemy>=2.0
 psycopg2-binary>=2.9
 aiohttp==3.9.5
-google-genai>=0.5.0
+aiohttp-socks>=0.8.4
 httpx[socks]>=0.27.0
 python-docx>=1.1.0

@@ -75,7 +75,7 @@ class DialogueSession(Base):
 
 
 class DialogueMessage(Base):
-    """Сообщение в истории диалога (для Gemini и аудита)."""
+    """Сообщение в истории диалога (для LLM и аудита)."""
 
     __tablename__ = "dialogue_messages"
 

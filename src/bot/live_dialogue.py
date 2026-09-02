@@ -1,4 +1,4 @@
-"""Расклад «Живой диалог» — тест: только админы, многоходовый чат с Gemini и draw_card."""
+"""Расклад «Живой диалог» — тест: только админы, многоходовый чат с LLM и draw_card."""
 
 from __future__ import annotations
 
@@ -19,11 +19,11 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, TelegramObject
 
-from llm.client import GeminiClientError
+from llm.client import OpenRouterClientError
 from llm.gemini_dialogue import (
     assistant_payload_from_response,
     build_system_prompt,
-    call_gemini,
+    call_openrouter,
     format_model_reply_for_telegram_html,
     infer_phase_update,
     strip_action_json_from_text,
@@ -360,7 +360,7 @@ async def _request_interpretation_after_batch(
         "Все карты расклада уже открыты (результаты draw_card в истории). "
         "Не вызывай draw_card повторно. Дай связную интерпретацию по всем позициям."
     )
-    display_text, meta, drawn = await _gemini_multi_round(db, session_id, system_prompt)
+    display_text, meta, drawn = await _llm_multi_round(db, session_id, system_prompt)
     await _handle_model_result(message, state, user_id, session_id, display_text, meta, drawn)
 
 
@@ -388,10 +388,10 @@ class LiveDialogueMenuExitMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 
-async def _gemini_multi_round(
+async def _llm_multi_round(
     db, session_id: int, system_prompt: str
 ) -> tuple[str, dict[str, Any] | None, list[dict[str, Any]]]:
-    """Повторные вызовы Gemini, пока есть draw_card; история перечитывается из БД."""
+    """Повторные вызовы LLM, пока есть draw_card; история перечитывается из БД."""
     last_meta: dict[str, Any] | None = None
     display_parts: list[str] = []
     drawn_this_turn: list[dict[str, Any]] = []
@@ -403,11 +403,11 @@ async def _gemini_multi_round(
         history = sm.load_history(session_id, db)
         call_t0 = time.perf_counter()
         try:
-            result = await call_gemini(history, system_prompt)
-        except GeminiClientError:
+            result = await call_openrouter(history, system_prompt)
+        except OpenRouterClientError:
             raise
         logger.info(
-            "live_dialogue gemini round=%s session_id=%s history=%s elapsed_ms=%.0f",
+            "live_dialogue openrouter round=%s session_id=%s history=%s elapsed_ms=%.0f",
             round_idx,
             session_id,
             len(history),
@@ -526,7 +526,7 @@ async def _recover_empty_model_reply(
         "Не вызывай draw_card. JSON action — только suggest_questions, если уместны 2–3 коротких вопроса."
     )
     history = sm.load_history(session_id, db)
-    result = await call_gemini(history, recovery_prompt)
+    result = await call_openrouter(history, recovery_prompt)
     text = strip_action_json_from_text(result["text"] or "")
     meta = result["metadata"]
     ap = assistant_payload_from_response(result["raw_response"], result["text"] or "", result["tool_calls"])
@@ -730,8 +730,8 @@ async def _handle_model_result(
                         await _request_interpretation_after_batch(
                             message, state, user_id, session_id, db, session
                         )
-                    except GeminiClientError:
-                        logger.exception("Gemini error after single-spread batch")
+                    except OpenRouterClientError:
+                        logger.exception("OpenRouter error after single-spread batch")
                         await message.answer("Не удалось связаться с Милки. Попробуй чуть позже.")
                     return
 
@@ -771,8 +771,8 @@ async def _handle_model_result(
                 await _request_interpretation_after_batch(
                     message, state, user_id, session_id, db, session
                 )
-            except GeminiClientError:
-                logger.exception("Gemini error after draw_cards batch")
+            except OpenRouterClientError:
+                logger.exception("OpenRouter error after draw_cards batch")
                 await message.answer("Не удалось связаться с Милки. Попробуй чуть позже.")
             return
 
@@ -814,9 +814,9 @@ async def _handle_model_result(
                     "После этого только при необходимости верни action=complete."
                 )
                 try:
-                    display_text2, meta2, drawn2 = await _gemini_multi_round(db, session_id, system_prompt)
-                except GeminiClientError:
-                    logger.exception("Gemini error when forcing remaining spread positions")
+                    display_text2, meta2, drawn2 = await _llm_multi_round(db, session_id, system_prompt)
+                except OpenRouterClientError:
+                    logger.exception("OpenRouter error when forcing remaining spread positions")
                     await message.answer("Не удалось связаться с Милки. Попробуй чуть позже.")
                     return
 
@@ -912,26 +912,26 @@ async def _process_turn(message: Message, state: FSMContext, user_text: str) -> 
                     "Не вызывай draw_card в этом ходе, если пользователь не просил «сразу карты» / «давай расклад»."
                 )
 
-            async def _run_gemini():
-                return await _gemini_multi_round(db, session_id, system_prompt)
+            async def _run_llm():
+                return await _llm_multi_round(db, session_id, system_prompt)
 
             try:
-                gemini_t0 = time.perf_counter()
-                display_text, meta, drawn = await _typing_while(_run_gemini(), message)
+                llm_t0 = time.perf_counter()
+                display_text, meta, drawn = await _typing_while(_run_llm(), message)
                 if not (display_text or "").strip() and not meta and not drawn:
                     display_text, meta = await _recover_empty_model_reply(
                         db, session_id, system_prompt
                     )
                 logger.info(
-                    "live_dialogue turn gemini_done user_id=%s session_id=%s elapsed_ms=%.0f action=%s drawn=%s",
+                    "live_dialogue turn openrouter_done user_id=%s session_id=%s elapsed_ms=%.0f action=%s drawn=%s",
                     user_id,
                     session_id,
-                    (time.perf_counter() - gemini_t0) * 1000,
+                    (time.perf_counter() - llm_t0) * 1000,
                     (meta or {}).get("action"),
                     len(drawn),
                 )
-            except GeminiClientError:
-                logger.exception("Gemini error in live_dialogue")
+            except OpenRouterClientError:
+                logger.exception("OpenRouter error in live_dialogue")
                 await message.answer("Не удалось связаться с Милки. Попробуй чуть позже.")
                 return
 
@@ -1131,8 +1131,8 @@ async def cb_live_pick_spread(cb: CallbackQuery, state: FSMContext) -> None:
                         ),
                         cb.message,
                     )
-        except GeminiClientError:
-            logger.exception("Gemini error in live_dialogue callback")
+        except OpenRouterClientError:
+            logger.exception("OpenRouter error in live_dialogue callback")
             await cb.message.answer("Не удалось связаться с Милки. Попробуй чуть позже.")
 
 

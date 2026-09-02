@@ -1,4 +1,4 @@
-"""Изолированные тесты парсинга и сборки истории (без вызова Gemini API)."""
+"""Изолированные тесты парсинга и сборки истории (без вызова LLM API)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import pytest
 
 from llm.gemini_dialogue import (
     extract_json_objects,
-    history_to_contents,
+    history_to_messages,
     infer_phase_update,
     parse_action_metadata,
     strip_action_json_from_text,
@@ -54,14 +54,16 @@ def test_build_system_prompt_reading_subject() -> None:
     assert "третьем лице" in p
 
 
-def test_history_to_contents_roundtrip() -> None:
+def test_history_to_messages_roundtrip() -> None:
     hist = [
         {"role": "user", "text": "Привет"},
         {"role": "model", "text": "Мяу", "function_calls": [{"name": "draw_card", "args": {"position_name": "Совет"}}]},
         {"role": "tool", "name": "draw_card", "response": {"card": "Звезда"}},
     ]
-    contents = history_to_contents(hist)
-    assert len(contents) == 3
-    assert contents[0].role == "user"
-    assert contents[1].role == "model"
-    assert contents[2].role == "tool"
+    messages = history_to_messages(hist)
+    assert len(messages) == 3
+    assert messages[0]["role"] == "user"
+    assert messages[1]["role"] == "assistant"
+    assert messages[1]["tool_calls"][0]["function"]["name"] == "draw_card"
+    assert messages[2]["role"] == "tool"
+    assert messages[2]["tool_call_id"] == messages[1]["tool_calls"][0]["id"]

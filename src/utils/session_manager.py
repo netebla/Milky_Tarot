@@ -1,4 +1,4 @@
-"""Сессии живого диалога, история для Gemini, карты, память пользователя, биллинг."""
+"""Сессии живого диалога, история для LLM, карты, память пользователя, биллинг."""
 
 from __future__ import annotations
 
@@ -192,7 +192,7 @@ def save_message(
 
 def load_history(session_id: int, db: Session) -> list[dict[str, Any]]:
     """
-    История в упрощённом виде для сборки запроса к Gemini.
+    История в упрощённом виде для сборки запроса к LLM.
 
     role: user | model | tool (tool → Part.from_function_response в llm-слое).
     """

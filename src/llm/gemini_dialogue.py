@@ -1,4 +1,4 @@
-"""Многоходовой вызов Gemini для «Живого диалога»: история, tool draw_card, разбор JSON-действий."""
+"""Многоходовой вызов LLM для «Живого диалога»: история, tool draw_card, разбор JSON-действий."""
 
 from __future__ import annotations
 
@@ -7,37 +7,34 @@ import html
 import json
 import logging
 import re
-from typing import Any, List, Optional
+from typing import Any
 
-from google.genai import types
-
-from llm.client import GEMINI_MODEL, GeminiClientError, get_genai_client
+from llm.client import OpenRouterClientError, chat_completion
 
 logger = logging.getLogger(__name__)
 
-DRAW_CARD_TOOL = types.Tool(
-    function_declarations=[
-        types.FunctionDeclaration(
-            name="draw_card",
-            description=(
-                "Вытянуть одну карту для одной позиции расклада. "
-                "Для расклада из N позиций вызывай ровно N раз подряд (по одному вызову на позицию), "
-                "в логическом порядке позиций, прежде чем писать длинную общую интерпретацию. "
-                "Не смешивай с предложением раскладов JSON: сначала выбор расклада, потом карты."
-            ),
-            parameters_json_schema={
-                "type": "object",
-                "properties": {
-                    "position_name": {
-                        "type": "string",
-                        "description": "Название позиции, например 'Прошлое', 'Скрытые силы', 'Совет'",
-                    }
-                },
-                "required": ["position_name"],
+DRAW_CARD_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "draw_card",
+        "description": (
+            "Вытянуть одну карту для одной позиции расклада. "
+            "Для расклада из N позиций вызывай ровно N раз подряд (по одному вызову на позицию), "
+            "в логическом порядке позиций, прежде чем писать длинную общую интерпретацию. "
+            "Не смешивай с предложением раскладов JSON: сначала выбор расклада, потом карты."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "position_name": {
+                    "type": "string",
+                    "description": "Название позиции, например 'Прошлое', 'Скрытые силы', 'Совет'",
+                }
             },
-        )
-    ]
-)
+            "required": ["position_name"],
+        },
+    },
+}
 
 
 def build_system_prompt(
@@ -136,65 +133,101 @@ def build_system_prompt(
     )
 
 
-def _history_item_to_content(item: dict[str, Any]) -> types.Content:
-    role = item["role"]
-    if role == "user":
-        return types.Content(
-            role="user",
-            parts=[types.Part.from_text(text=item.get("text") or "")],
-        )
-    if role == "tool":
-        name = item.get("name") or "draw_card"
-        resp = item.get("response") or {}
-        part = types.Part.from_function_response(name=name, response=resp)
-        return types.Content(role="tool", parts=[part])
-    if role == "model":
-        parts: List[types.Part] = []
-        for fc in item.get("function_calls") or []:
-            fn = fc.get("name") or ""
-            args = fc.get("args") or {}
-            if not isinstance(args, dict):
-                args = {}
-            parts.append(
-                types.Part(function_call=types.FunctionCall(name=fn, args=args))
+def history_to_messages(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Преобразовать историю БД в формат OpenAI Chat Completions.
+
+    Старые записи прежнего провайдера не содержат идентификаторы tool calls. Для них создаётся
+    стабильный ID, чтобы история продолжала корректно передаваться после релиза.
+    """
+    messages: list[dict[str, Any]] = []
+    pending_tool_calls: list[dict[str, str]] = []
+    legacy_index = 0
+
+    for item in history:
+        role = item["role"]
+        if role == "user":
+            messages.append({"role": "user", "content": item.get("text") or ""})
+            continue
+
+        if role == "model":
+            tool_calls: list[dict[str, Any]] = []
+            for fc in item.get("function_calls") or []:
+                name = str(fc.get("name") or "draw_card")
+                args = fc.get("args") or {}
+                if not isinstance(args, dict):
+                    args = {}
+                legacy_index += 1
+                call_id = str(fc.get("id") or f"legacy_call_{legacy_index}")
+                tool_calls.append(
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {"name": name, "arguments": json.dumps(args, ensure_ascii=False)},
+                    }
+                )
+                pending_tool_calls.append({"id": call_id, "name": name})
+
+            message: dict[str, Any] = {
+                "role": "assistant",
+                "content": (item.get("text") or "").strip() or None,
+            }
+            if tool_calls:
+                message["tool_calls"] = tool_calls
+            messages.append(message)
+            continue
+
+        if role == "tool":
+            name = str(item.get("name") or "draw_card")
+            match_index = next(
+                (i for i, call in enumerate(pending_tool_calls) if call["name"] == name),
+                None,
             )
-        text = (item.get("text") or "").strip()
-        if text:
-            parts.append(types.Part.from_text(text=text))
-        if not parts:
-            parts.append(types.Part.from_text(text=""))
-        return types.Content(role="model", parts=parts)
-    raise ValueError(f"Unknown history role: {role}")
+            if match_index is None:
+                logger.warning("Tool response without matching call in history: %s", name)
+                continue
+            call = pending_tool_calls.pop(match_index)
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call["id"],
+                    "content": json.dumps(item.get("response") or {}, ensure_ascii=False),
+                }
+            )
+            continue
+
+        raise ValueError(f"Unknown history role: {role}")
+
+    return messages
 
 
-def history_to_contents(history: list[dict[str, Any]]) -> list[types.Content]:
-    return [_history_item_to_content(h) for h in history]
+def _response_text_and_calls(response: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+    choices = response.get("choices") or []
+    first_choice = choices[0] if choices and isinstance(choices[0], dict) else {}
+    message = first_choice.get("message") if isinstance(first_choice, dict) else {}
+    if not isinstance(message, dict):
+        return "", []
 
-
-def _response_text_and_calls(response: Any) -> tuple[str, list[dict[str, Any]]]:
-    text = (getattr(response, "text", None) or "").strip()
+    text = (message.get("content") or "").strip()
     calls: list[dict[str, Any]] = []
-    raw_calls = getattr(response, "function_calls", None) or []
-    for fc in raw_calls:
-        name = getattr(fc, "name", None) or ""
-        args = getattr(fc, "args", None) or {}
-        if isinstance(args, dict):
-            args_dict = dict(args)
-        elif hasattr(args, "items"):
-            args_dict = {k: v for k, v in args.items()}
-        else:
-            args_dict = {}
-        calls.append({"name": name, "args": args_dict})
-    if not text and response.candidates:
-        cand = response.candidates[0]
-        content = getattr(cand, "content", None)
-        parts = getattr(content, "parts", None) or []
-        chunks: list[str] = []
-        for part in parts:
-            t = getattr(part, "text", None)
-            if t:
-                chunks.append(t)
-        text = "".join(chunks).strip()
+    for raw_call in message.get("tool_calls") or []:
+        if not isinstance(raw_call, dict):
+            continue
+        function = raw_call.get("function") or {}
+        if not isinstance(function, dict):
+            continue
+        raw_args = function.get("arguments") or "{}"
+        try:
+            args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+        except json.JSONDecodeError:
+            logger.warning("OpenRouter returned invalid tool arguments: %s", raw_args)
+            args = {}
+        calls.append(
+            {
+                "id": str(raw_call.get("id") or ""),
+                "name": str(function.get("name") or ""),
+                "args": args if isinstance(args, dict) else {},
+            }
+        )
     return text, calls
 
 
@@ -318,37 +351,31 @@ def infer_phase_update(metadata: dict[str, Any] | None, current_phase: str) -> s
     return None
 
 
-async def call_gemini(
+async def call_openrouter(
     messages: list[dict[str, Any]],
     system_prompt: str,
 ) -> dict[str, Any]:
     """
-    Один вызов Gemini по истории.
+    Один вызов OpenRouter по истории.
 
     Возвращает:
       text — текст модели (может быть пустым при только tool call),
       tool_calls — [{"name", "args"}, ...],
       metadata — распарсенный JSON с action propose_spreads | complete или None,
-      raw_function_calls — как в ответе SDK (для сохранения в БД).
+      raw_response — ответ API (для отладки и обратной совместимости).
     """
-    client = await get_genai_client()
-    contents = history_to_contents(messages)
+    history = history_to_messages(messages)
+    try:
+        response = await chat_completion(
+            history,
+            system_prompt=system_prompt,
+            tools=[DRAW_CARD_TOOL],
+        )
+    except OpenRouterClientError:
+        raise
+    except Exception as exc:
+        raise OpenRouterClientError(f"Ошибка обращения к OpenRouter: {exc}") from exc
 
-    def _invoke() -> Any:
-        try:
-            return client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    tools=[DRAW_CARD_TOOL],
-                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-                ),
-            )
-        except Exception as exc:
-            raise GeminiClientError(f"Ошибка обращения к Gemini: {exc}") from exc
-
-    response = await asyncio.to_thread(_invoke)
     text, calls = _response_text_and_calls(response)
     meta = parse_action_metadata(text)
     return {
@@ -364,5 +391,8 @@ def assistant_payload_from_response(response: Any, text: str, tool_calls: list[d
     content = text or ""
     model_function_calls: list[dict[str, Any]] | None = None
     if tool_calls:
-        model_function_calls = [{"name": c["name"], "args": c.get("args") or {}} for c in tool_calls]
+        model_function_calls = [
+            {"id": c.get("id") or "", "name": c["name"], "args": c.get("args") or {}}
+            for c in tool_calls
+        ]
     return {"content": content, "model_function_calls": model_function_calls}

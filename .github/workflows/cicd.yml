@@ -91,7 +91,8 @@ jobs:
             cat > .env << 'EOF'
             BOT_TOKEN=${{ secrets.BOT_TOKEN }}
             ADMIN_ID=${{ secrets.ADMIN_ID }}
-            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+            OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}
+            OPENROUTER_MODEL=deepseek/deepseek-v4-flash
             PROXY_ENABLED=${{ secrets.PROXY_ENABLED }}
             PROXY_URL=${{ secrets.PROXY_URL }}
             NO_PROXY=${{ secrets.NO_PROXY }}

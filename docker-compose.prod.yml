@@ -19,7 +19,8 @@ services:
       BOT_TOKEN: ${BOT_TOKEN}
       ADMIN_ID: ${ADMIN_ID}
       DATABASE_URL: postgresql://postgres:your_password@db:5432/tarot_db
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-deepseek/deepseek-v4-flash}
       PROXY_ENABLED: ${PROXY_ENABLED:-false}
       PROXY_URL: ${PROXY_URL:-}
       HTTP_PROXY: ${PROXY_URL:-}

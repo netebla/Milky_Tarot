@@ -1,4 +1,4 @@
-"""Единая настройка исходящего прокси для Telegram, Gemini, httpx и прочего HTTP."""
+"""Единая настройка исходящего прокси для Telegram, OpenRouter, httpx и прочего HTTP."""
 
 from __future__ import annotations
 
