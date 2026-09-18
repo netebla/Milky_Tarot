@@ -32,6 +32,14 @@ LIVE_DIALOGUE_FREE_PER_DAY = 1
 LIVE_DIALOGUE_PRICE_FISH = 150
 MAX_USER_MESSAGES_PER_SESSION = 20
 SESSION_STALE_HOURS = 24
+MAX_MEMORY_ITEMS_PER_COMPLETION = 5
+MAX_MEMORY_CONTENT_CHARS = 600
+_MEMORY_TYPES = {"theme", "pattern", "preference", "open_question", "key_card"}
+_UNSAFE_MEMORY_RE = re.compile(
+    r"(?:https?://|www\.|t\.me/|ignore (?:all |previous )?(?:instructions|rules)|"
+    r"system prompt|developer message|<\s*/?system)",
+    re.IGNORECASE,
+)
 
 _session_locks: dict[int, asyncio.Lock] = {}
 
@@ -339,10 +347,20 @@ def save_memories(
 ) -> None:
     """Сохранить инсайты после завершения диалога."""
     day = session_day or date.today()
+    saved = 0
     for item in memories:
+        if saved >= MAX_MEMORY_ITEMS_PER_COMPLETION:
+            break
+        if not isinstance(item, dict):
+            continue
         mtype = (item.get("type") or "").strip()
-        content = (item.get("content") or "").strip()
-        if not mtype or not content:
+        content = " ".join((item.get("content") or "").split())[:MAX_MEMORY_CONTENT_CHARS]
+        if mtype not in _MEMORY_TYPES or not content:
+            continue
+        # Память создаётся моделью из пользовательского текста и в следующей сессии
+        # попадает в системный контекст. Не сохраняем команды и ссылки как «факты».
+        if _UNSAFE_MEMORY_RE.search(content):
+            logger.warning("Rejected unsafe generated memory type=%s", mtype)
             continue
         row = UserMemory(
             user_id=user_id,
@@ -353,6 +371,7 @@ def save_memories(
             session_date=day,
         )
         db.add(row)
+        saved += 1
     if do_commit:
         db.commit()
 

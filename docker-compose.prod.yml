@@ -21,6 +21,8 @@ services:
       DATABASE_URL: postgresql://postgres:your_password@db:5432/tarot_db
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-deepseek/deepseek-v4-flash}
+      OPENROUTER_TEMPERATURE: ${OPENROUTER_TEMPERATURE:-0.35}
+      OPENROUTER_MAX_TOKENS: ${OPENROUTER_MAX_TOKENS:-900}
       PROXY_ENABLED: ${PROXY_ENABLED:-false}
       PROXY_URL: ${PROXY_URL:-}
       HTTP_PROXY: ${PROXY_URL:-}

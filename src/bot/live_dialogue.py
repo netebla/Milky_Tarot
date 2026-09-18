@@ -20,6 +20,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
 from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, TelegramObject
 
 from llm.client import OpenRouterClientError
+from llm.safety import safe_generated_label
 from llm.gemini_dialogue import (
     assistant_payload_from_response,
     build_system_prompt,
@@ -445,7 +446,8 @@ async def _llm_multi_round(
         for c in calls:
             if c.get("name") != "draw_card":
                 continue
-            pos = (c.get("args") or {}).get("position_name") or "Позиция"
+            raw_pos = (c.get("args") or {}).get("position_name")
+            pos = safe_generated_label(raw_pos, fallback="Позиция")
             existing = _get_existing_drawn_for_position(db, session_id, pos)
             if existing:
                 title = existing["card_name"]
