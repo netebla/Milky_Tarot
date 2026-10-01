@@ -15,6 +15,7 @@ This file is a compact operational guide for AI agents and new contributors.
 
 - Main bot entrypoint: `python -m bot.main`
 - Payment bot entrypoint: `python -m bot.payment_main`
+- Support bot entrypoint: `python -m bot.support_main`
 - Container base image: `python:3.10-slim` (see `Dockerfile`)
 
 ## Key Directories
@@ -40,6 +41,7 @@ This file is a compact operational guide for AI agents and new contributors.
 - Daily limits for premium readings rely on DB fields, not memory state.
 - LLM failures must not crash update processing; handlers should return user-safe fallback text.
 - Admin-only flows must always check admin permissions.
+- Support replies must be routed only through persisted `support_relays`; never expose admin contacts.
 
 ## LLM/OpenRouter Notes
 

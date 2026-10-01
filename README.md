@@ -1,6 +1,6 @@
 # Milky Tarot Bot
 
-Telegram-бот с раскладами Таро, оплатой через ЮKassa и LLM-интерпретациями через OpenRouter.
+Telegram-система с раскладами Таро, оплатой через ЮKassa, отдельным ботом поддержки и LLM-интерпретациями через OpenRouter.
 
 ## Быстрый старт (локально, Docker)
 
@@ -21,6 +21,8 @@ docker logs -f tarot_bot
 
 - `src/bot/main.py` — точка входа основного бота.
 - `src/bot/payment_main.py` — точка входа payment-бота.
+- `src/bot/support_main.py` — точка входа support-бота.
+- `src/bot/support_handlers.py` — обращения пользователей и ответы администраторов.
 - `src/bot/handlers.py` — основные пользовательские сценарии и расклады.
 - `src/bot/payment_handlers.py` — сценарии оплат и проверка статуса платежа.
 - `src/llm/client.py` — клиент LLM (OpenRouter), включая обработку ошибок.
@@ -35,6 +37,7 @@ docker logs -f tarot_bot
 - Расклады с картами и изображениями.
 - Премиальные сценарии за внутреннюю валюту `fish_balance`.
 - Отдельный payment-бот для пополнения баланса.
+- Отдельный support-бот с общей админской очередью обращений.
 - Админ-рассылки (`/admin_push`) с выбором типа.
 - Статистика (`/admin_stats`).
 - LLM-интерпретации с дополнительным RAG-контекстом из `src/data/rag_cards.csv`.
@@ -46,6 +49,8 @@ docker logs -f tarot_bot
 - `BOT_TOKEN`
 - `ADMIN_ID` (может быть списком через запятую)
 - `PAYMENT_BOT_TOKEN`
+- `SUPPORT_BOT_TOKEN`
+- `SUPPORT_BOT_USERNAME` — username support-бота без `@`; не является секретом.
 - `YOOKASSA_SHOP_ID`
 - `YOOKASSA_SECRET_KEY`
 
@@ -55,6 +60,18 @@ docker logs -f tarot_bot
 - `YOOKASSA_RETURN_URL` (по умолчанию `https://t.me/Milky_Tarot_Bot`)
 - `OPENROUTER_API_KEY`
 - `OPENROUTER_MODEL` (по умолчанию `deepseek/deepseek-v4-flash`)
+
+## Бот поддержки
+
+Кнопка «Помощь» в основном боте открывает отдельного support-бота. Пользователь может отправлять
+текст, фото, документы и голосовые сообщения. Все администраторы из `ADMIN_ID` получают карточку
+обращения и копию сообщения. Ответ отправляется пользователю через reply на карточку/сообщение
+или кнопку «Ответить»; личные аккаунты администраторов пользователю не показываются.
+
+Обращения сохраняются в Postgres, назначаются первому ответившему администратору и не теряют
+маршрутизацию reply после перезапуска. Команда `/tickets` показывает администратору открытые
+обращения. Перед первым рабочим уведомлением каждый администратор должен один раз открыть
+support-бота и нажать `/start` — это ограничение Telegram.
 
 ## Прокси для OpenRouter и внешних HTTP-запросов
 
@@ -124,9 +141,16 @@ Secrets (базово):
 
 - `SSH_HOST`, `SSH_USER`, `SSH_KEY`, `SSH_PORT`
 - `BOT_TOKEN`, `ADMIN_ID`
+- `SUPPORT_BOT_TOKEN`
 - `OPENROUTER_API_KEY`
 - `PAYMENT_BOT_TOKEN`
 - `YOOKASSA_SHOP_ID`, `YOOKASSA_SECRET_KEY`, `YOOKASSA_RETURN_URL`
+
+Repository variable (GitHub Actions → Variables):
+
+- `SUPPORT_BOT_USERNAME` — username без `@`.
+
+Миграция `migrations/003_support_bot.sql` применяется workflow автоматически перед запуском сервисов.
 
 ## Быстрая диагностика OpenRouter
 

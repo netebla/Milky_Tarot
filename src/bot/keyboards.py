@@ -34,6 +34,14 @@ def settings_inline_kb(push_enabled: bool) -> InlineKeyboardMarkup:
     )
 
 
+def support_link_kb(url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Написать в поддержку", url=url)],
+        ]
+    )
+
+
 def fish_balance_kb() -> ReplyKeyboardMarkup:
     """Инлайн-клавиатура под сообщением с балансом рыбок."""
     return InlineKeyboardMarkup(

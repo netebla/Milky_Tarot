@@ -50,6 +50,7 @@ from .keyboards import (
     fish_payment_method_kb,
     admin_push_with_reading_kb,
     admin_push_type_kb,
+    support_link_kb,
 )
 
 logger = logging.getLogger(__name__)
@@ -273,8 +274,15 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
+    username = (os.getenv("SUPPORT_BOT_USERNAME") or "").strip().lstrip("@")
+    if not username:
+        logger.error("SUPPORT_BOT_USERNAME is not set")
+        await message.answer("Поддержка временно недоступна. Попробуй немного позже.")
+        return
     await message.answer(
-        "Для связи с админом пишите @netebla"
+        "Если возник вопрос или что-то не работает, напиши в поддержку Milky. "
+        "Специалист ответит тебе прямо в отдельном боте.",
+        reply_markup=support_link_kb(f"https://t.me/{username}?start=support"),
     )
 
 
@@ -286,6 +294,20 @@ async def btn_card(message: Message) -> None:
 @router.message(F.text == "Помощь")
 async def btn_help(message: Message) -> None:
     await cmd_help(message)
+
+
+@router.callback_query(F.data == "help")
+async def cb_help(callback: CallbackQuery) -> None:
+    username = (os.getenv("SUPPORT_BOT_USERNAME") or "").strip().lstrip("@")
+    if not username:
+        logger.error("SUPPORT_BOT_USERNAME is not set")
+        await callback.message.answer("Поддержка временно недоступна. Попробуй немного позже.")
+    else:
+        await callback.message.answer(
+            "Напиши в поддержку Milky — специалист ответит тебе в отдельном боте.",
+            reply_markup=support_link_kb(f"https://t.me/{username}?start=support"),
+        )
+    await callback.answer()
 
 
 @router.message(F.text == "Мои рыбки")

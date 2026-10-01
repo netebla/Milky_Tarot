@@ -8,6 +8,8 @@ from sqlalchemy import (
     DateTime,
     Text,
     ForeignKey,
+    BigInteger,
+    Index,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
@@ -143,6 +145,78 @@ class Payment(Base):
     description = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SupportTicket(Base):
+    """Обращение пользователя в отдельном боте поддержки."""
+
+    __tablename__ = "support_tickets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, nullable=False, index=True)
+    username = Column(String, nullable=True)
+    display_name = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="open", index=True)
+    assigned_admin_id = Column(BigInteger, nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    closed_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index(
+            "uq_support_tickets_one_open_per_user",
+            "user_id",
+            unique=True,
+            postgresql_where=(status == "open"),
+            sqlite_where=(status == "open"),
+        ),
+    )
+
+
+class SupportMessage(Base):
+    """Метаданные сообщения в обращении (без обязательного хранения содержимого)."""
+
+    __tablename__ = "support_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ticket_id = Column(
+        Integer,
+        ForeignKey("support_tickets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    sender_role = Column(String, nullable=False)
+    sender_id = Column(BigInteger, nullable=False)
+    telegram_message_id = Column(BigInteger, nullable=True)
+    content_type = Column(String, nullable=False, default="unknown")
+    preview = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class SupportRelay(Base):
+    """Связь сообщения в админском чате с обращением для reply-маршрутизации."""
+
+    __tablename__ = "support_relays"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ticket_id = Column(
+        Integer,
+        ForeignKey("support_tickets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    admin_id = Column(BigInteger, nullable=False)
+    admin_message_id = Column(BigInteger, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index(
+            "uq_support_relays_admin_message",
+            "admin_id",
+            "admin_message_id",
+            unique=True,
+        ),
+    )
 
 
 def init_db():

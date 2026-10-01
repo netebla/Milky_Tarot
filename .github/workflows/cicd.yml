@@ -91,6 +91,8 @@ jobs:
             cat > .env << 'EOF'
             BOT_TOKEN=${{ secrets.BOT_TOKEN }}
             ADMIN_ID=${{ secrets.ADMIN_ID }}
+            SUPPORT_BOT_TOKEN=${{ secrets.SUPPORT_BOT_TOKEN }}
+            SUPPORT_BOT_USERNAME=${{ vars.SUPPORT_BOT_USERNAME }}
             OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}
             OPENROUTER_MODEL=deepseek/deepseek-v4-flash
             PROXY_ENABLED=${{ secrets.PROXY_ENABLED }}
@@ -116,6 +118,9 @@ jobs:
             cd ~/apps/milky_tarot
             docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
             docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d db
+            until docker compose -f docker-compose.prod.yml exec -T db pg_isready -U postgres -d tarot_db; do sleep 2; done
+            docker compose -f docker-compose.prod.yml exec -T db psql -v ON_ERROR_STOP=1 -U postgres -d tarot_db < migrations/003_support_bot.sql
             docker compose -f docker-compose.prod.yml up -d
             echo "DB: после изменения схемы применить миграцию (один раз):"
             echo "  cd ~/apps/milky_tarot && docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d tarot_db < migrations/001_live_dialogue.sql"
