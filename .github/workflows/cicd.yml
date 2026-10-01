@@ -92,7 +92,7 @@ jobs:
             BOT_TOKEN=${{ secrets.BOT_TOKEN }}
             ADMIN_ID=${{ secrets.ADMIN_ID }}
             SUPPORT_BOT_TOKEN=${{ secrets.SUPPORT_BOT_TOKEN }}
-            SUPPORT_BOT_USERNAME=${{ vars.SUPPORT_BOT_USERNAME }}
+            SUPPORT_BOT_USERNAME=${{ secrets.SUPPORT_BOT_USERNAME }}
             OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}
             OPENROUTER_MODEL=deepseek/deepseek-v4-flash
             PROXY_ENABLED=${{ secrets.PROXY_ENABLED }}

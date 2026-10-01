@@ -50,7 +50,7 @@ docker logs -f tarot_bot
 - `ADMIN_ID` (может быть списком через запятую)
 - `PAYMENT_BOT_TOKEN`
 - `SUPPORT_BOT_TOKEN`
-- `SUPPORT_BOT_USERNAME` — username support-бота без `@`; не является секретом.
+- `SUPPORT_BOT_USERNAME` — username support-бота без `@`; в CI хранится в Actions Secrets.
 - `YOOKASSA_SHOP_ID`
 - `YOOKASSA_SECRET_KEY`
 
@@ -141,14 +141,13 @@ Secrets (базово):
 
 - `SSH_HOST`, `SSH_USER`, `SSH_KEY`, `SSH_PORT`
 - `BOT_TOKEN`, `ADMIN_ID`
-- `SUPPORT_BOT_TOKEN`
+- `SUPPORT_BOT_TOKEN`, `SUPPORT_BOT_USERNAME`
 - `OPENROUTER_API_KEY`
 - `PAYMENT_BOT_TOKEN`
 - `YOOKASSA_SHOP_ID`, `YOOKASSA_SECRET_KEY`, `YOOKASSA_RETURN_URL`
 
-Repository variable (GitHub Actions → Variables):
-
-- `SUPPORT_BOT_USERNAME` — username без `@`.
+`SUPPORT_BOT_USERNAME` хранится в GitHub Actions Secrets для единообразия конфигурации;
+значение — username support-бота без `@`.
 
 Миграция `migrations/003_support_bot.sql` применяется workflow автоматически перед запуском сервисов.
 

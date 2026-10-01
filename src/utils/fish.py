@@ -14,13 +14,12 @@ def tariff_to_amounts(amount_rub: int) -> Tuple[int, int]:
     total_fish — сколько рыбок начисляем всего,
     bonus_fish — из них сколько являются бонусом (для отображения).
     """
-    if amount_rub == 50:
-        return 350, 0
     if amount_rub == 150:
+        return 350, 0
+    if amount_rub == 250:
         return 1050, 150
-    if amount_rub == 300:
+    if amount_rub == 450:
         return 2100, 400
-    if amount_rub == 650:
+    if amount_rub == 950:
         return 4550, 1000
     return 0, 0
-

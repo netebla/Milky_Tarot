@@ -57,16 +57,16 @@ def fish_tariff_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="50₽ – 350 🐟", callback_data="fish_tariff:50"),
+                InlineKeyboardButton(text="150₽ – 350 🐟", callback_data="fish_tariff:150"),
             ],
             [
-                InlineKeyboardButton(text="150₽ – 1050 🐟", callback_data="fish_tariff:150"),
+                InlineKeyboardButton(text="250₽ – 1050 🐟", callback_data="fish_tariff:250"),
             ],
             [
-                InlineKeyboardButton(text="300₽ – 2100 🐟", callback_data="fish_tariff:300"),
+                InlineKeyboardButton(text="450₽ – 2100 🐟", callback_data="fish_tariff:450"),
             ],
             [
-                InlineKeyboardButton(text="650₽ – 4550 🐟", callback_data="fish_tariff:650"),
+                InlineKeyboardButton(text="950₽ – 4550 🐟", callback_data="fish_tariff:950"),
             ],
             [
                 InlineKeyboardButton(text="Назад", callback_data="fish_back_to_balance"),

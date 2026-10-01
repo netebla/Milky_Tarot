@@ -585,10 +585,10 @@ async def cb_fish_back_to_tariffs(cb: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(FishPaymentStates.choosing_tariff)
     await cb.message.edit_text(
         "Выберите, сколько рыбок хотите приобрести:\n"
-        "50₽ – 350 🐟\n"
-        "150₽ – 1050 🐟\n"
-        "300₽ – 2100 🐟\n"
-        "650₽ – 4550 🐟",
+        "150₽ – 350 🐟\n"
+        "250₽ – 1050 🐟\n"
+        "450₽ – 2100 🐟\n"
+        "950₽ – 4550 🐟",
         reply_markup=fish_tariff_kb(),
     )
     await cb.answer()
