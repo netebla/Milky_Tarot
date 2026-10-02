@@ -50,7 +50,6 @@ docker logs -f tarot_bot
 - `ADMIN_ID` (может быть списком через запятую)
 - `PAYMENT_BOT_TOKEN`
 - `SUPPORT_BOT_TOKEN`
-- `SUPPORT_BOT_USERNAME` — username support-бота без `@`; в CI хранится в Actions Secrets.
 - `YOOKASSA_SHOP_ID`
 - `YOOKASSA_SECRET_KEY`
 
@@ -60,6 +59,8 @@ docker logs -f tarot_bot
 - `YOOKASSA_RETURN_URL` (по умолчанию `https://t.me/Milky_Tarot_Bot`)
 - `OPENROUTER_API_KEY`
 - `OPENROUTER_MODEL` (по умолчанию `deepseek/deepseek-v4-flash`)
+- `SUPPORT_BOT_USERNAME` — необязательный username support-бота без `@`; если не задан,
+  основной бот автоматически получает его через `SUPPORT_BOT_TOKEN`.
 
 ## Бот поддержки
 
@@ -141,13 +142,13 @@ Secrets (базово):
 
 - `SSH_HOST`, `SSH_USER`, `SSH_KEY`, `SSH_PORT`
 - `BOT_TOKEN`, `ADMIN_ID`
-- `SUPPORT_BOT_TOKEN`, `SUPPORT_BOT_USERNAME`
+- `SUPPORT_BOT_TOKEN`
 - `OPENROUTER_API_KEY`
 - `PAYMENT_BOT_TOKEN`
 - `YOOKASSA_SHOP_ID`, `YOOKASSA_SECRET_KEY`, `YOOKASSA_RETURN_URL`
 
-`SUPPORT_BOT_USERNAME` хранится в GitHub Actions Secrets для единообразия конфигурации;
-значение — username support-бота без `@`.
+`SUPPORT_BOT_USERNAME` можно дополнительно хранить в GitHub Actions Secrets как явный override,
+но для работы ссылки достаточно `SUPPORT_BOT_TOKEN`.
 
 Миграция `migrations/003_support_bot.sql` применяется workflow автоматически перед запуском сервисов.
 

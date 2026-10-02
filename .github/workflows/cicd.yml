@@ -122,6 +122,8 @@ jobs:
             until docker compose -f docker-compose.prod.yml exec -T db pg_isready -U postgres -d tarot_db; do sleep 2; done
             docker compose -f docker-compose.prod.yml exec -T db psql -v ON_ERROR_STOP=1 -U postgres -d tarot_db < migrations/003_support_bot.sql
             docker compose -f docker-compose.prod.yml up -d
+            docker compose -f docker-compose.prod.yml exec -T bot sh -c 'test -n "$SUPPORT_BOT_USERNAME" || test -n "$SUPPORT_BOT_TOKEN"'
+            docker compose -f docker-compose.prod.yml ps
             echo "DB: после изменения схемы применить миграцию (один раз):"
             echo "  cd ~/apps/milky_tarot && docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d tarot_db < migrations/001_live_dialogue.sql"
             echo "  cd ~/apps/milky_tarot && docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d tarot_db < migrations/002_live_dialogue_reading_subject.sql"

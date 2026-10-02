@@ -34,6 +34,38 @@ if not BOT_TOKEN:
 push_scheduler = PushScheduler()
 
 
+async def resolve_support_bot_username() -> None:
+    """Получить username support-бота по токену, если он не задан явно."""
+    configured_username = (os.getenv("SUPPORT_BOT_USERNAME") or "").strip().lstrip("@")
+    if configured_username:
+        # Нормализуем значение, чтобы обработчики всегда получали username без @.
+        os.environ["SUPPORT_BOT_USERNAME"] = configured_username
+        logger.info("Support bot username загружен из окружения")
+        return
+
+    support_token = (os.getenv("SUPPORT_BOT_TOKEN") or "").strip()
+    if not support_token:
+        logger.error("SUPPORT_BOT_USERNAME и SUPPORT_BOT_TOKEN не заданы")
+        return
+
+    support_bot = Bot(
+        token=support_token,
+        session=create_aiogram_session(),
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    try:
+        support_identity = await support_bot.get_me()
+        if not support_identity.username:
+            logger.error("Telegram не вернул username support-бота")
+            return
+        os.environ["SUPPORT_BOT_USERNAME"] = support_identity.username
+        logger.info("Support bot username автоматически получен через Telegram API")
+    except Exception:
+        logger.exception("Не удалось автоматически получить username support-бота")
+    finally:
+        await support_bot.session.close()
+
+
 async def reschedule_user_pushes(bot: Bot) -> None:
     """Пересоздать задания по пользователям согласно настройкам в базе."""
     with SessionLocal() as session:
@@ -71,6 +103,7 @@ def _expire_stale_live_dialogues() -> None:
 
 
 async def on_startup(bot: Bot) -> None:
+    await resolve_support_bot_username()
     push_scheduler.start()
     set_bot(bot)
     set_scheduler(push_scheduler)

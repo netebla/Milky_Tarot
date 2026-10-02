@@ -18,6 +18,7 @@ services:
     environment:
       BOT_TOKEN: ${BOT_TOKEN}
       ADMIN_ID: ${ADMIN_ID}
+      SUPPORT_BOT_TOKEN: ${SUPPORT_BOT_TOKEN}
       SUPPORT_BOT_USERNAME: ${SUPPORT_BOT_USERNAME}
       DATABASE_URL: postgresql://postgres:your_password@db:5432/tarot_db
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
