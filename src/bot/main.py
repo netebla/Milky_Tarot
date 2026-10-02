@@ -5,6 +5,7 @@ import logging
 import os
 import signal
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from utils.proxy import configure_process_proxy, create_aiogram_session
 
@@ -32,14 +33,28 @@ if not BOT_TOKEN:
 
 # Глобальный планировщик
 push_scheduler = PushScheduler()
+SUPPORT_LINK_READY_FILE = Path("/tmp/milky_support_link_ready")
+
+
+def _mark_support_link_ready() -> None:
+    try:
+        SUPPORT_LINK_READY_FILE.touch()
+    except OSError:
+        logger.exception("Не удалось создать readiness-маркер ссылки поддержки")
 
 
 async def resolve_support_bot_username() -> None:
     """Получить username support-бота по токену, если он не задан явно."""
+    try:
+        SUPPORT_LINK_READY_FILE.unlink(missing_ok=True)
+    except OSError:
+        logger.exception("Не удалось сбросить readiness-маркер ссылки поддержки")
+
     configured_username = (os.getenv("SUPPORT_BOT_USERNAME") or "").strip().lstrip("@")
     if configured_username:
         # Нормализуем значение, чтобы обработчики всегда получали username без @.
         os.environ["SUPPORT_BOT_USERNAME"] = configured_username
+        _mark_support_link_ready()
         logger.info("Support bot username загружен из окружения")
         return
 
@@ -59,6 +74,7 @@ async def resolve_support_bot_username() -> None:
             logger.error("Telegram не вернул username support-бота")
             return
         os.environ["SUPPORT_BOT_USERNAME"] = support_identity.username
+        _mark_support_link_ready()
         logger.info("Support bot username автоматически получен через Telegram API")
     except Exception:
         logger.exception("Не удалось автоматически получить username support-бота")
