@@ -124,6 +124,20 @@ jobs:
             docker compose -f docker-compose.prod.yml up -d
             docker compose -f docker-compose.prod.yml exec -T bot sh -c 'test -n "$SUPPORT_BOT_USERNAME" || test -n "$SUPPORT_BOT_TOKEN"'
             docker compose -f docker-compose.prod.yml ps
+            support_link_ready=0
+            for attempt in $(seq 1 15); do
+              if docker compose -f docker-compose.prod.yml logs --no-color --tail 100 bot | grep -q "Support bot username"; then
+                support_link_ready=1
+                echo "Support bot link configuration is ready"
+                break
+              fi
+              sleep 2
+            done
+            if [ "$support_link_ready" -ne 1 ]; then
+              echo "Support bot link configuration failed"
+              docker compose -f docker-compose.prod.yml logs --no-color --tail 100 bot
+              exit 1
+            fi
             echo "DB: после изменения схемы применить миграцию (один раз):"
             echo "  cd ~/apps/milky_tarot && docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d tarot_db < migrations/001_live_dialogue.sql"
             echo "  cd ~/apps/milky_tarot && docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d tarot_db < migrations/002_live_dialogue_reading_subject.sql"
