@@ -199,6 +199,14 @@ async def _send_card_message(message: Message, card) -> None:
                     BufferedInputFile(path.read_bytes(), filename=path.name),
                     caption=caption,
                 )
+                await message.answer(
+                    "Мы можем с тобой более глубоко и подробно обсудить волнующие тебя вопросы. Давай попробуем? 🐾",
+                    reply_markup=InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [InlineKeyboardButton(text="Задать свой вопрос", callback_data="daily_card_ask_question")]
+                        ]
+                    ),
+                )
                 return
             except TelegramBadRequest:
                 pass
@@ -211,6 +219,44 @@ async def _send_card_message(message: Message, card) -> None:
         )
     except (httpx.HTTPError, TelegramBadRequest, TelegramNetworkError):
         await message.answer(caption)
+
+    await message.answer(
+        "Мы можем с тобой более глубоко и подробно обсудить волнующие тебя вопросы. Давай попробуем? 🐾",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="Задать свой вопрос", callback_data="daily_card_ask_question")]
+            ]
+        ),
+    )
+
+
+async def _start_three_cards_with_intro(message: Message, state: FSMContext) -> None:
+    """Запустить расклад «Задать свой вопрос» и показать его вступление."""
+    await _start_three_cards_flow(message, state)
+
+    intro_text_1 = (
+        "Мяу, давай посмотрим глубже 🐈‍⬛\n"
+        "«Задать свой вопрос» — это расклад из трёх карт, который показывает:\n"
+        "• что сейчас происходит,\n"
+        "• куда всё движется,\n"
+        "• к чему это может привести.\n\n"
+        "Один такой расклад я делаю бесплатно раз в день.\n"
+        "Если захочешь ещё — можно будет сделать дополнительный за рыбки."
+    )
+    intro_text_2 = (
+        "Перед тем как спросить, коротко опиши свою ситуацию — так я лучше почувствую, что происходит, и подберу точные ответы.\n"
+        "Если не готов рассказывать историю, нажми на кнопку «Сразу к вопросу», и мы начнем! 🌟"
+    )
+
+    await message.answer(intro_text_1)
+    await message.answer(
+        intro_text_2,
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="Сразу к вопросу", callback_data="three_keys_go_to_question")]
+            ]
+        ),
+    )
 
 
 @router.message(Command("start"))
@@ -362,36 +408,18 @@ async def btn_three_cards(message: Message, state: FSMContext) -> None:
         await message.answer("Сначала нажми /start 🚀")
         return
 
-    await _start_three_cards_flow(message, state)
+    await _start_three_cards_with_intro(message, state)
 
-    intro_text_1 = (
-        "Мяу, давай посмотрим глубже 🐈‍⬛\n"
-        "«Задать свой вопрос» — это расклад из трёх карт, который показывает:\n"
-        "• что сейчас происходит,\n"
-        "• куда всё движется,\n"
-        "• к чему это может привести.\n\n"
-        "Один такой расклад я делаю бесплатно раз в день.\n"
-        "Если захочешь ещё — можно будет сделать дополнительный за рыбки."
-    )
-    intro_text_2 = (
-        "Перед тем как спросить, коротко опиши свою ситуацию — так я лучше почувствую, что происходит, и подберу точные ответы.\n"
-        "Если не готов рассказывать историю, нажми на кнопку «Сразу к вопросу», и мы начнем! 🌟"
-    )
 
-    await message.answer(intro_text_1)
-    await message.answer(
-        intro_text_2,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Сразу к вопросу",
-                        callback_data="three_keys_go_to_question",
-                    )
-                ]
-            ]
-        ),
-    )
+@router.callback_query(F.data == "daily_card_ask_question")
+async def cb_daily_card_ask_question(cb: CallbackQuery, state: FSMContext) -> None:
+    """Запустить расклад «Задать свой вопрос» из предложения после карты дня."""
+    if not cb.from_user:
+        await cb.answer()
+        return
+
+    await cb.answer()
+    await _start_three_cards_with_intro(cb.message, state)
 
 
 @router.callback_query(F.data == "change_push_time")
