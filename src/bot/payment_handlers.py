@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from utils.admin_ids import is_admin as _is_admin
 from utils.db import SessionLocal, User, Payment
 from utils.fish import tariff_to_amounts
+from utils.pricing import get_tariffs
 from utils.yookassa_client import create_payment, get_payment, YooKassaError
 
 logger = logging.getLogger(__name__)
@@ -42,18 +43,11 @@ def _tariffs_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура с тарифами пополнения."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(text="150₽ – 350 🐟", callback_data="pay_tariff:150"),
-            ],
-            [
-                InlineKeyboardButton(text="250₽ – 1050 🐟", callback_data="pay_tariff:250"),
-            ],
-            [
-                InlineKeyboardButton(text="450₽ – 2100 🐟", callback_data="pay_tariff:450"),
-            ],
-            [
-                InlineKeyboardButton(text="950₽ – 4550 🐟", callback_data="pay_tariff:950"),
-            ],
+            [InlineKeyboardButton(
+                text=f"{tariff.amount_rub}₽ – {tariff.fish_amount} 🐟",
+                callback_data=f"pay_tariff:{tariff.amount_rub}",
+            )]
+            for tariff in get_tariffs()
         ]
     )
 

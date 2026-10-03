@@ -92,6 +92,7 @@ jobs:
             BOT_TOKEN=${{ secrets.BOT_TOKEN }}
             ADMIN_ID=${{ secrets.ADMIN_ID }}
             SUPPORT_BOT_TOKEN=${{ secrets.SUPPORT_BOT_TOKEN }}
+            ADMIN_BOT_TOKEN=${{ secrets.ADMIN_BOT_TOKEN }}
             SUPPORT_BOT_USERNAME=${{ secrets.SUPPORT_BOT_USERNAME }}
             OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}
             OPENROUTER_MODEL=deepseek/deepseek-v4-flash
@@ -121,8 +122,10 @@ jobs:
             docker compose -f docker-compose.prod.yml up -d db
             until docker compose -f docker-compose.prod.yml exec -T db pg_isready -U postgres -d tarot_db; do sleep 2; done
             docker compose -f docker-compose.prod.yml exec -T db psql -v ON_ERROR_STOP=1 -U postgres -d tarot_db < migrations/003_support_bot.sql
+            docker compose -f docker-compose.prod.yml exec -T db psql -v ON_ERROR_STOP=1 -U postgres -d tarot_db < migrations/004_admin_panel.sql
             docker compose -f docker-compose.prod.yml up -d
             docker compose -f docker-compose.prod.yml exec -T bot sh -c 'test -n "$SUPPORT_BOT_USERNAME" || test -n "$SUPPORT_BOT_TOKEN"'
+            docker compose -f docker-compose.prod.yml exec -T admin_bot sh -c 'test -n "$ADMIN_BOT_TOKEN" && test -n "$BOT_TOKEN" && test -n "$ADMIN_ID"'
             docker compose -f docker-compose.prod.yml ps
             support_link_ready=0
             for attempt in $(seq 1 15); do

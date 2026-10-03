@@ -12,6 +12,8 @@ import logging
 import os
 
 from utils.proxy import configure_process_proxy, create_aiogram_session
+from utils.db import init_db
+from utils.pricing import ensure_default_prices
 
 configure_process_proxy()
 
@@ -31,6 +33,11 @@ if not PAYMENT_BOT_TOKEN:
     raise RuntimeError("PAYMENT_BOT_TOKEN is not set")
 
 
+async def on_startup() -> None:
+    init_db()
+    ensure_default_prices()
+
+
 async def main() -> None:
     """
     Запуск второго бота-оплатника.
@@ -43,6 +50,7 @@ async def main() -> None:
     dp = Dispatcher(storage=MemoryStorage())
 
     dp.include_router(payment_router)
+    dp.startup.register(on_startup)
 
     logger.info("Запускаю бота оплаты (@Milky_payment_bot)")
     await dp.start_polling(bot)
@@ -50,4 +58,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-

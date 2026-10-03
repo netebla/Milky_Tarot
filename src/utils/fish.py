@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Tuple
 
+from utils.pricing import tariff_for_rubles
+
 
 def tariff_to_amounts(amount_rub: int) -> Tuple[int, int]:
     """
@@ -14,12 +16,7 @@ def tariff_to_amounts(amount_rub: int) -> Tuple[int, int]:
     total_fish — сколько рыбок начисляем всего,
     bonus_fish — из них сколько являются бонусом (для отображения).
     """
-    if amount_rub == 150:
-        return 350, 0
-    if amount_rub == 250:
-        return 1050, 150
-    if amount_rub == 450:
-        return 2100, 400
-    if amount_rub == 950:
-        return 4550, 1000
-    return 0, 0
+    tariff = tariff_for_rubles(amount_rub)
+    if not tariff:
+        return 0, 0
+    return int(tariff.fish_amount), int(tariff.bonus_fish or 0)

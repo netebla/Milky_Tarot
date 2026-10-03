@@ -65,3 +65,12 @@ WHERE table_name = 'users' AND column_name = 'year_energy_card';
 docker compose -f docker-compose.prod.yml exec -T db \
   psql -v ON_ERROR_STOP=1 -U postgres -d tarot_db < migrations/003_support_bot.sql
 ```
+
+## Админ-бот и редактируемые цены
+
+GitHub Actions применяет миграцию автоматически. Для ручного обновления:
+
+```bash
+docker compose -f docker-compose.prod.yml exec -T db \
+  psql -v ON_ERROR_STOP=1 -U postgres -d tarot_db < migrations/004_admin_panel.sql
+```

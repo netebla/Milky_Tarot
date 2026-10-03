@@ -1,6 +1,6 @@
 # Milky Tarot Bot
 
-Telegram-система с раскладами Таро, оплатой через ЮKassa, отдельным ботом поддержки и LLM-интерпретациями через OpenRouter.
+Telegram-система с раскладами Таро, оплатой через ЮKassa, отдельными ботами поддержки и администрирования, а также LLM-интерпретациями через OpenRouter.
 
 ## Быстрый старт (локально, Docker)
 
@@ -22,6 +22,8 @@ docker logs -f tarot_bot
 - `src/bot/main.py` — точка входа основного бота.
 - `src/bot/payment_main.py` — точка входа payment-бота.
 - `src/bot/support_main.py` — точка входа support-бота.
+- `src/bot/admin_main.py` — точка входа закрытого админ-бота.
+- `src/bot/admin_handlers.py` — команды и маршруты админ-панели.
 - `src/bot/support_handlers.py` — обращения пользователей и ответы администраторов.
 - `src/bot/handlers.py` — основные пользовательские сценарии и расклады.
 - `src/bot/payment_handlers.py` — сценарии оплат и проверка статуса платежа.
@@ -38,6 +40,7 @@ docker logs -f tarot_bot
 - Премиальные сценарии за внутреннюю валюту `fish_balance`.
 - Отдельный payment-бот для пополнения баланса.
 - Отдельный support-бот с общей админской очередью обращений.
+- Отдельный закрытый admin-бот: цены, рассылки, продуктовая и финансовая статистика.
 - Админ-рассылки (`/admin_push`) с выбором типа.
 - Статистика (`/admin_stats`).
 - LLM-интерпретации с дополнительным RAG-контекстом из `src/data/rag_cards.csv`.
@@ -50,6 +53,7 @@ docker logs -f tarot_bot
 - `ADMIN_ID` (может быть списком через запятую)
 - `PAYMENT_BOT_TOKEN`
 - `SUPPORT_BOT_TOKEN`
+- `ADMIN_BOT_TOKEN`
 - `YOOKASSA_SHOP_ID`
 - `YOOKASSA_SECRET_KEY`
 
@@ -73,6 +77,22 @@ docker logs -f tarot_bot
 маршрутизацию reply после перезапуска. Команда `/tickets` показывает администратору открытые
 обращения. Перед первым рабочим уведомлением каждый администратор должен один раз открыть
 support-бота и нажать `/start` — это ограничение Telegram.
+
+## Админ-бот
+
+Админ-бот — отдельный сервис и отдельный Telegram-бот. Доступ разрешён только Telegram ID из
+`ADMIN_ID`. После `/start` доступны:
+
+- изменение рублёвых тарифов, количества рыбок и бонусов;
+- изменение стоимости платных повторных раскладов;
+- рассылка форматированного текста или фотографии с подписью от имени основного бота;
+- статистика пользователей карты дня и сценария «Задать свой вопрос» за сегодня, 7, 30 дней
+  или всё время;
+- финансовая статистика ЮKassa: выручка, платежи, средний чек, плательщики и начисленные рыбки.
+
+Токен создаётся через BotFather и хранится в GitHub Actions Secret `ADMIN_BOT_TOKEN`. Сам токен
+нельзя добавлять в `.env.example`, compose-файлы или исходный код — там используется только имя
+переменной окружения.
 
 ## Прокси для OpenRouter и внешних HTTP-запросов
 
@@ -143,6 +163,7 @@ Secrets (базово):
 - `SSH_HOST`, `SSH_USER`, `SSH_KEY`, `SSH_PORT`
 - `BOT_TOKEN`, `ADMIN_ID`
 - `SUPPORT_BOT_TOKEN`
+- `ADMIN_BOT_TOKEN`
 - `OPENROUTER_API_KEY`
 - `PAYMENT_BOT_TOKEN`
 - `YOOKASSA_SHOP_ID`, `YOOKASSA_SECRET_KEY`, `YOOKASSA_RETURN_URL`
@@ -150,7 +171,8 @@ Secrets (базово):
 `SUPPORT_BOT_USERNAME` можно дополнительно хранить в GitHub Actions Secrets как явный override,
 но для работы ссылки достаточно `SUPPORT_BOT_TOKEN`.
 
-Миграция `migrations/003_support_bot.sql` применяется workflow автоматически перед запуском сервисов.
+Миграции `migrations/003_support_bot.sql` и `migrations/004_admin_panel.sql` применяются workflow
+автоматически перед запуском сервисов.
 
 ## Быстрая диагностика OpenRouter
 

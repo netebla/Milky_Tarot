@@ -18,6 +18,7 @@ from utils.db import (
     User,
     UserMemory,
 )
+from utils.pricing import get_service_price
 
 logger = logging.getLogger(__name__)
 
@@ -399,15 +400,16 @@ def try_complete_session(
 
     fish_cost = 0
     if daily >= LIVE_DIALOGUE_FREE_PER_DAY:
+        live_dialogue_price = get_service_price("live_dialogue", LIVE_DIALOGUE_PRICE_FISH)
         balance = getattr(user, "fish_balance", 0) or 0
-        if balance < LIVE_DIALOGUE_PRICE_FISH:
+        if balance < live_dialogue_price:
             return (
                 False,
-                "Чтобы завершить этот диалог и сохранить итог, нужно 150 рыбок. "
+                f"Чтобы завершить этот диалог и сохранить итог, нужно {live_dialogue_price} рыбок. "
                 "Пополни баланс или вернись завтра — первая сессия дня бесплатная.",
             )
-        user.fish_balance = balance - LIVE_DIALOGUE_PRICE_FISH
-        fish_cost = LIVE_DIALOGUE_PRICE_FISH
+        user.fish_balance = balance - live_dialogue_price
+        fish_cost = live_dialogue_price
 
     session.completed_at = datetime.utcnow()
     session.phase = PHASE_COMPLETED

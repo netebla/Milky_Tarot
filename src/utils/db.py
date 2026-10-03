@@ -147,6 +147,21 @@ class Payment(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class ProductPrice(Base):
+    """Редактируемые из админ-бота тарифы и цены платных сценариев."""
+
+    __tablename__ = "product_prices"
+
+    code = Column(String, primary_key=True)
+    title = Column(String, nullable=False)
+    kind = Column(String, nullable=False, index=True)  # tariff / service
+    amount_rub = Column(Integer, nullable=True)
+    fish_amount = Column(Integer, nullable=False)
+    bonus_fish = Column(Integer, nullable=False, default=0)
+    active = Column(Boolean, nullable=False, default=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class SupportTicket(Base):
     """Обращение пользователя в отдельном боте поддержки."""
 

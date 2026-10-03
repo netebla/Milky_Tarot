@@ -16,6 +16,7 @@ This file is a compact operational guide for AI agents and new contributors.
 - Main bot entrypoint: `python -m bot.main`
 - Payment bot entrypoint: `python -m bot.payment_main`
 - Support bot entrypoint: `python -m bot.support_main`
+- Admin bot entrypoint: `python -m bot.admin_main`
 - Container base image: `python:3.10-slim` (see `Dockerfile`)
 
 ## Key Directories

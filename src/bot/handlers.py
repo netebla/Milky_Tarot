@@ -37,6 +37,7 @@ from utils.scheduler import DEFAULT_PUSH_TIME
 from llm.three_cards import generate_three_card_reading
 from llm.new_year_reading import generate_new_year_reading, NEW_YEAR_QUESTIONS
 from utils.fish import tariff_to_amounts
+from utils.pricing import get_service_price, get_tariffs
 from .keyboards import (
     advice_draw_kb,
     choose_time_kb,
@@ -239,9 +240,11 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 
     welcome_path = Path("/app/src/data/images/welcome.jpg")
     welcome_text = (
-        "Привет! Я Милки, твой спутник в мире карт🪐\n\n"
-        "Я помогу тебе настроиться на день, а также дам ответы на самые волнующие вопросы ☀️\n\n"
-        "Но для начала, давай познакомимся?"
+        "Я — Милки, твой маленький проводник в мире Таро 🐈‍⬛✨\n\n"
+        "Хочешь узнать, с каким настроением встретишь сегодняшний день?\n"
+        "Хочешь получить подсказку в ситуации, которая не выходит из головы?\n"
+        "Или посмотреть на вопрос глубже?\n\n"
+        "Я уже тасую свою колоду 😉"
     )
 
     if welcome_path.exists():
@@ -583,12 +586,11 @@ async def cb_fish_back_to_tariffs(cb: CallbackQuery, state: FSMContext) -> None:
         return
 
     await state.set_state(FishPaymentStates.choosing_tariff)
+    tariffs_text = "\n".join(
+        f"{tariff.amount_rub}₽ – {tariff.fish_amount} 🐟" for tariff in get_tariffs()
+    )
     await cb.message.edit_text(
-        "Выберите, сколько рыбок хотите приобрести:\n"
-        "150₽ – 350 🐟\n"
-        "250₽ – 1050 🐟\n"
-        "450₽ – 2100 🐟\n"
-        "950₽ – 4550 🐟",
+        "Выберите, сколько рыбок хотите приобрести:\n" + tariffs_text,
         reply_markup=fish_tariff_kb(),
     )
     await cb.answer()
@@ -1242,11 +1244,11 @@ async def handle_three_cards_question(message: Message, state: FSMContext) -> No
             # Первый расклад за день — бесплатный.
             # Начиная со второго — списываем 69 рыбок, если хватает.
             FREE_PER_DAY = 1
-            PRICE_FISH = 69
+            price_fish = get_service_price("three_keys", 69)
 
             if daily_count >= FREE_PER_DAY:
                 balance = getattr(user_obj, "fish_balance", 0) or 0
-                if balance < PRICE_FISH:
+                if balance < price_fish:
                     # Недостаточно рыбок — показываем голодную Милки и выходим.
                     hungry_path = Path("src/data/images/hungry_milky.jpg")
                     text = (
@@ -1282,7 +1284,7 @@ async def handle_three_cards_question(message: Message, state: FSMContext) -> No
                     return
 
                 # Списываем рыбки за расклад
-                user_obj.fish_balance = balance - PRICE_FISH
+                user_obj.fish_balance = balance - price_fish
 
             # Фиксируем факт расклада на сегодня
             daily_count += 1
@@ -1375,7 +1377,8 @@ async def cb_three_keys_again(cb: CallbackQuery, state: FSMContext) -> None:
 
     intro_text_1 = (
         "Мяу, давай посмотрим, что подскажет тебе ещё один расклад из трёх карт! 😼\n"
-        "Напоминаю: один расклад в день — бесплатно, дальше - 69 рыбок."
+        f"Напоминаю: один расклад в день — бесплатно, дальше — "
+        f"{get_service_price('three_keys', 69)} рыбок."
     )
     intro_text_2 = (
         "Если хочешь, коротко опиши свою ситуацию, а потом задавай главный вопрос.\n"

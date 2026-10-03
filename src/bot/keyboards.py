@@ -1,5 +1,7 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
+from utils.pricing import get_tariffs
+
 
 def main_menu_kb(_show_admin_features: bool = False) -> ReplyKeyboardMarkup:
     keyboard = [
@@ -54,20 +56,17 @@ def fish_balance_kb() -> ReplyKeyboardMarkup:
 
 def fish_tariff_kb() -> InlineKeyboardMarkup:
     """Инлайн-клавиатура с вариантами тарифов."""
+    tariff_rows = [
+        [
+            InlineKeyboardButton(
+                text=f"{tariff.amount_rub}₽ – {tariff.fish_amount} 🐟",
+                callback_data=f"fish_tariff:{tariff.amount_rub}",
+            )
+        ]
+        for tariff in get_tariffs()
+    ]
     return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="150₽ – 350 🐟", callback_data="fish_tariff:150"),
-            ],
-            [
-                InlineKeyboardButton(text="250₽ – 1050 🐟", callback_data="fish_tariff:250"),
-            ],
-            [
-                InlineKeyboardButton(text="450₽ – 2100 🐟", callback_data="fish_tariff:450"),
-            ],
-            [
-                InlineKeyboardButton(text="950₽ – 4550 🐟", callback_data="fish_tariff:950"),
-            ],
+        inline_keyboard=tariff_rows + [
             [
                 InlineKeyboardButton(text="Назад", callback_data="fish_back_to_balance"),
                 InlineKeyboardButton(text="Главное меню", callback_data="fish_main_menu"),

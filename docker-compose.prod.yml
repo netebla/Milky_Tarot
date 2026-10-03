@@ -55,6 +55,26 @@ services:
       - db
     restart: unless-stopped
 
+  admin_bot:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/milky-tarot:latest
+    container_name: tarot_admin_bot
+    command: ["python", "-m", "bot.admin_main"]
+    environment:
+      ADMIN_BOT_TOKEN: ${ADMIN_BOT_TOKEN}
+      BOT_TOKEN: ${BOT_TOKEN}
+      ADMIN_ID: ${ADMIN_ID}
+      DATABASE_URL: postgresql://postgres:your_password@db:5432/tarot_db
+      PROXY_ENABLED: ${PROXY_ENABLED:-false}
+      PROXY_URL: ${PROXY_URL:-}
+      HTTP_PROXY: ${PROXY_URL:-}
+      HTTPS_PROXY: ${PROXY_URL:-}
+      ALL_PROXY: ${PROXY_URL:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,db,tarot_db,postgres,redis,api.yookassa.ru,yookassa.ru}
+      TZ: Europe/Moscow
+    depends_on:
+      - db
+    restart: unless-stopped
+
   payment_bot:
     image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/milky-tarot:latest
     container_name: tarot_payment_bot

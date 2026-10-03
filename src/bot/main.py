@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from utils.proxy import configure_process_proxy, create_aiogram_session
+from utils.db import init_db
+from utils.pricing import ensure_default_prices
 
 configure_process_proxy()
 
@@ -119,6 +121,8 @@ def _expire_stale_live_dialogues() -> None:
 
 
 async def on_startup(bot: Bot) -> None:
+    init_db()
+    ensure_default_prices()
     await resolve_support_bot_username()
     push_scheduler.start()
     set_bot(bot)
