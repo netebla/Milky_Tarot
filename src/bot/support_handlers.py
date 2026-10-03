@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from html import escape
 from io import BytesIO
 
@@ -25,6 +25,7 @@ from sqlalchemy import desc, func
 from sqlalchemy.exc import IntegrityError
 
 from utils.admin_ids import get_admin_ids, is_admin
+from utils.activity import count_active_today, moscow_today
 from utils.db import Payment, ProductPrice, SessionLocal, SupportMessage, SupportRelay, SupportTicket, User
 from utils.pricing import ensure_default_prices
 
@@ -407,18 +408,18 @@ def _period_start(days: int) -> datetime | None:
 
 
 async def _send_usage_stats(message: Message, days: int) -> None:
-    start = _period_start(days)
-    start_date = start.date() if start else None
+    today = moscow_today()
+    start_date = today - timedelta(days=days - 1) if days > 0 else None
     with SessionLocal() as db:
         total_users = db.query(User).count()
         card_query = db.query(User).filter(User.last_card_date.is_not(None))
         question_query = db.query(User).filter(User.three_keys_last_date.is_not(None))
         if start_date:
-            card_query = card_query.filter(User.last_card_date >= start_date)
-            question_query = question_query.filter(User.three_keys_last_date >= start_date)
+            card_query = card_query.filter(User.last_card_date >= start_date, User.last_card_date <= today)
+            question_query = question_query.filter(User.three_keys_last_date >= start_date, User.three_keys_last_date <= today)
         card_users = card_query.count()
         question_users = question_query.count()
-        active_today = db.query(User).filter(User.last_activity_date == date.today()).count()
+        active_today = count_active_today(db)
     label = "за всё время" if not days else ("сегодня" if days == 1 else f"за {days} дней")
     await message.answer(
         f"📊 <b>Использование — {label}</b>\n\n"

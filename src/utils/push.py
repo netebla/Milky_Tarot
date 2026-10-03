@@ -2,7 +2,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from datetime import date
 from pathlib import Path
 
 from aiogram import Bot
@@ -43,10 +42,6 @@ async def send_push_card(bot: Bot, user_id: int) -> None:
         user = session.query(User).filter(User.id == user_id).first()
         if not user or not user.push_enabled:
             return
-
-        today = date.today()
-        user.last_activity_date = today
-        session.commit()
 
         text = random.choice(PUSH_TEXTS) if PUSH_TEXTS else DEFAULT_PUSH_TEXT
         try:

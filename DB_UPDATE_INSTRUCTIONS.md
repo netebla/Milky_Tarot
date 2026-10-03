@@ -74,3 +74,15 @@ GitHub Actions применяет миграцию автоматически. �
 docker compose -f docker-compose.prod.yml exec -T db \
   psql -v ON_ERROR_STOP=1 -U postgres -d tarot_db < migrations/004_admin_panel.sql
 ```
+
+## Реальная активность пользователей
+
+Миграция применяется автоматически при деплое. Для ручного обновления выполните её перед
+запуском обновлённых ботов:
+
+```bash
+docker compose -f docker-compose.prod.yml exec -T db \
+  psql -v ON_ERROR_STOP=1 -U postgres -d tarot_db < migrations/005_user_activity.sql
+```
+
+Учёт начинается с установки обновления; загрязнённые пушами даты активности не переносятся.

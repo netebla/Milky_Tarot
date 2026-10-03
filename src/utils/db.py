@@ -58,6 +58,15 @@ class User(Base):
     live_dialogue_daily_count = Column(Integer, default=0)
 
 
+class UserActivity(Base):
+    """Одна запись на пользователя и день с входящим действием в основном боте."""
+
+    __tablename__ = "user_activity"
+
+    user_id = Column(BigInteger, primary_key=True)
+    activity_date = Column(Date, primary_key=True, index=True)
+
+
 class DialogueSession(Base):
     """Сессия многоходового диалога с Milky."""
 

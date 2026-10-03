@@ -24,6 +24,7 @@ from utils.push import send_main_menu_refresh_all, send_push_card
 from utils.db import SessionLocal, User
 from utils import session_manager as dialogue_sm
 from .handlers import router as handlers_router
+from .activity_middleware import UserActivityMiddleware
 from .live_dialogue import LiveDialogueMenuExitMiddleware, router as live_dialogue_router
 
 logging.basicConfig(level=logging.INFO)
@@ -167,6 +168,8 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher(storage=MemoryStorage())
+    dp.message.outer_middleware(UserActivityMiddleware())
+    dp.callback_query.outer_middleware(UserActivityMiddleware())
     dp.message.middleware(LiveDialogueMenuExitMiddleware())
     dp.callback_query.middleware(LiveDialogueMenuExitMiddleware())
 

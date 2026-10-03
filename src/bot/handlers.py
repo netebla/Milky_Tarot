@@ -23,6 +23,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from utils.app_state import get_bot, get_scheduler
+from utils.activity import count_active_today
 from utils.cards_loader import (
     GITHUB_RAW_BASE,
     IMAGES_DIR,
@@ -731,16 +732,8 @@ async def admin_stats(message: Message) -> None:
         # всего пользователей
         total_users = session.query(User).count()
 
-        # активные сегодня — пользователи, которые сегодня вытянули хотя бы одну карту
-        today = date.today()
-        active_today = (
-            session.query(User)
-            .filter(
-                User.draw_count > 0,
-                User.last_activity_date == today,
-            )
-            .count()
-        )
+        # Любое входящее действие в основном боте, без исходящих пушей.
+        active_today = count_active_today(session)
 
         # всего вытянуто карт (поле draw_count)
         total_draws = session.query(func.coalesce(func.sum(User.draw_count), 0)).scalar()
