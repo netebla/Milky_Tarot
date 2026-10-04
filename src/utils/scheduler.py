@@ -49,7 +49,15 @@ class PushScheduler:
                 if asyncio.iscoroutine(result):
                     if not self._loop:
                         raise RuntimeError("Event loop is not configured for PushScheduler")
-                    asyncio.run_coroutine_threadsafe(result, self._loop)
+                    future = asyncio.run_coroutine_threadsafe(result, self._loop)
+
+                    def log_async_failure(done: "asyncio.Future[Any]") -> None:
+                        try:
+                            done.result()
+                        except Exception:
+                            logger.exception("Асинхронное задание планировщика завершилось с ошибкой")
+
+                    future.add_done_callback(log_async_failure)
             except Exception:
                 logger.exception("Ошибка при выполнении задания пуша")
 
@@ -65,10 +73,14 @@ class PushScheduler:
 
         job_id = self._job_id(user_id)
         self.remove(user_id)
-        trigger = CronTrigger(hour=hour, minute=minute)
+        # Распределяем пользователей по секундам минуты. Без этого сотни
+        # пользователей с общим временем (обычно 10:00) создают сетевой
+        # всплеск и удерживают все подключения к БД во время отправки.
+        second = user_id % 60
+        trigger = CronTrigger(hour=hour, minute=minute, second=second, timezone=self.timezone)
         wrapped = self._wrap_callback(callback)
         self.scheduler.add_job(wrapped, trigger, id=job_id, kwargs={"user_id": user_id}, replace_existing=True)
-        logger.info("Запланирован ежедневный пуш для пользователя %s на %02d:%02d", user_id, hour, minute)
+        logger.info("Запланирован ежедневный пуш для пользователя %s на %02d:%02d:%02d", user_id, hour, minute, second)
 
     @staticmethod
     def convert_user_time_to_moscow(time_str: str, tz_offset_hours: int) -> str:

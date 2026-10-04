@@ -44,16 +44,23 @@ async def send_push_card(bot: Bot, user_id: int) -> None:
             return
 
         text = random.choice(PUSH_TEXTS) if PUSH_TEXTS else DEFAULT_PUSH_TEXT
-        try:
-            await bot.send_message(
-                chat_id=user_id,
-                text=text,
-                reply_markup=push_card_kb(),
-            )
-        except Exception as e:
-            logger.warning("Не удалось отправить пуш %s: %s", user_id, e)
+    except Exception:
+        logger.exception("Ошибка подготовки ежедневного пуша user_id=%s", user_id)
+        return
     finally:
         session.close()
+
+    # Не занимать подключение к БД, пока ждём Telegram или прокси.
+    try:
+        await bot.send_message(
+            chat_id=user_id,
+            text=text,
+            reply_markup=push_card_kb(),
+        )
+    except Exception:
+        logger.exception("Не удалось отправить ежедневный пуш user_id=%s", user_id)
+    else:
+        logger.info("Ежедневный пуш отправлен user_id=%s", user_id)
 
 
 async def send_main_menu_refresh_all(bot: Bot) -> None:

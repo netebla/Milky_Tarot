@@ -170,11 +170,13 @@ async def _send_card_of_the_day(message: Message, user_id: int) -> None:
             if card:
                 user.last_activity_date = today
                 session.commit()
+                session.close()
                 await _send_card_message(message, card)
                 return
 
         # Выбираем новую карту и сохраняем в базе
         card = choose_random_card(user, cards, db=session)
+        session.close()
         await _send_card_message(message, card)
     finally:
         session.close()
@@ -1752,8 +1754,15 @@ async def cb_cancel_tz(cb: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data == "push_draw_card")
 async def cb_push_draw_card(cb: CallbackQuery) -> None:
     """Обработчик кнопки под пушем — вытянуть карту дня."""
-    await _send_card_of_the_day(cb.message, cb.from_user.id)
     await cb.answer()
+    try:
+        await _send_card_of_the_day(cb.message, cb.from_user.id)
+    except Exception:
+        logger.exception("Не удалось выдать карту дня по кнопке-пушу user_id=%s", cb.from_user.id)
+        try:
+            await cb.message.answer("Не получилось вытянуть карту. Попробуй ещё раз чуть позже 🙏")
+        except Exception:
+            logger.exception("Не удалось отправить пользователю сообщение об ошибке карты дня user_id=%s", cb.from_user.id)
 
 
 # -------- Новогодний расклад на 2026 год --------
