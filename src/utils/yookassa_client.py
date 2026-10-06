@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 
 
 YOOKASSA_API_BASE = "https://api.yookassa.ru/v3"
+# Текущий исходящий прокси отвечает 403 для api.yookassa.ru. Запросы YooKassa
+# должны идти напрямую; trust_env=False также не даст случайно направить их
+# через прокси, если api.yookassa.ru пропадёт из NO_PROXY.
+YOOKASSA_HTTP_TIMEOUT_SECONDS = 20
 
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
@@ -107,7 +111,10 @@ async def create_payment(
         "Content-Type": "application/json",
     }
 
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(
+        timeout=YOOKASSA_HTTP_TIMEOUT_SECONDS,
+        trust_env=False,
+    ) as client:
         try:
             response = await client.post(
                 f"{YOOKASSA_API_BASE}/payments",
@@ -142,7 +149,10 @@ async def get_payment(payment_id: str) -> Dict[str, Any]:
     """
     shop_id, secret_key = _get_auth()
 
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(
+        timeout=YOOKASSA_HTTP_TIMEOUT_SECONDS,
+        trust_env=False,
+    ) as client:
         try:
             response = await client.get(
                 f"{YOOKASSA_API_BASE}/payments/{payment_id}",

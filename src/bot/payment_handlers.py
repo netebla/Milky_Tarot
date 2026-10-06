@@ -39,6 +39,14 @@ IMAGES_DIR = DATA_DIR / "images"
 router = Router()
 
 
+async def _remove_payment_actions(message: Message) -> None:
+    """Убрать кнопки с обработанного платежа; параллельный клик может их опередить."""
+    try:
+        await message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        logger.debug("Кнопки платежа уже удалены или сообщение нельзя изменить")
+
+
 def _tariffs_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура с тарифами пополнения."""
     return InlineKeyboardMarkup(
@@ -78,6 +86,24 @@ def _payment_actions_kb(payment_db_id: int, include_back_to_main: bool = True) -
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def _new_payment_kb() -> InlineKeyboardMarkup:
+    """Дать понятный путь к новому платежу после завершения предыдущего."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Пополнить ещё", callback_data="show_tariffs")]
+        ]
+    )
+
+
+@router.callback_query(F.data == "show_tariffs")
+async def cb_show_tariffs(cb: CallbackQuery) -> None:
+    await cb.message.answer(
+        "Выбери сумму нового пополнения:",
+        reply_markup=_tariffs_keyboard(),
+    )
+    await cb.answer()
+
+
 async def _auto_check_payment(bot: Bot, payment_db_id: int, user_id: int) -> None:
     """
     Фоновая проверка статуса платежа в ЮKassa.
@@ -98,15 +124,8 @@ async def _auto_check_payment(bot: Bot, payment_db_id: int, user_id: int) -> Non
 
             # Если платёж уже обработан вручную
             if payment.status == "succeeded":
-                user_obj = session.query(User).filter(User.id == user_id).first()
-                balance = getattr(user_obj, "fish_balance", 0) if user_obj else 0
-                await bot.send_message(
-                    chat_id=user_id,
-                    text=(
-                        "Оплата уже была успешно проведена ✅\n"
-                        f"Текущий баланс: {balance} 🐟"
-                    ),
-                )
+                # Успех уже сообщил обработчик, который первым зафиксировал платёж.
+                # Повторное уведомление после ожидания только засоряет чат.
                 return
 
             yookassa_id = payment.yookassa_payment_id
@@ -124,7 +143,12 @@ async def _auto_check_payment(bot: Bot, payment_db_id: int, user_id: int) -> Non
         method_type = payment_method.get("type")
 
         with SessionLocal() as session:
-            payment: Payment | None = session.query(Payment).filter(Payment.id == payment_db_id).first()
+            payment: Payment | None = (
+                session.query(Payment)
+                .filter(Payment.id == payment_db_id)
+                .with_for_update()
+                .first()
+            )
             if not payment:
                 return
 
@@ -133,7 +157,10 @@ async def _auto_check_payment(bot: Bot, payment_db_id: int, user_id: int) -> Non
             # Проверяем ДО обновления статуса
             was_already_processed = payment.status == "succeeded"
             
-            payment.status = status or payment.status
+            # Не фиксируем succeeded без подтверждённого paid: иначе следующий
+            # проход сочтёт платёж обработанным и рыбки никогда не начислятся.
+            if status != "succeeded" or paid:
+                payment.status = status or payment.status
             payment.method = method_type or payment.method
             payment.updated_at = datetime.utcnow()
 
@@ -164,7 +191,11 @@ async def _auto_check_payment(bot: Bot, payment_db_id: int, user_id: int) -> Non
                     f"Тебе начислено {payment.fish_amount} 🐟.",
                     f"Твой новый баланс: {new_balance} 🐟",
                 ]
-                await bot.send_message(chat_id=user_id, text="\n".join(text_lines))
+                await bot.send_message(
+                    chat_id=user_id,
+                    text="\n".join(text_lines),
+                    reply_markup=_new_payment_kb(),
+                )
                 
                 # Отправляем изображение сытой милки
                 fed_text = (
@@ -380,10 +411,11 @@ async def cb_check_payment(cb: CallbackQuery) -> None:
             db_user = session.query(User).filter(User.id == user.id).first()
             balance = getattr(db_user, "fish_balance", 0) if db_user else 0
             await cb.message.answer(
-                f"Этот платёж уже был успешно проведён ранее ✅\n"
-                f"Текущий баланс: {balance} 🐟",
-                reply_markup=_payment_actions_kb(payment_db_id),
+                f"Этот платёж уже завершён ✅\nТекущий баланс: {balance} 🐟\n\n"
+                "Для нового пополнения выбери тариф ниже.",
+                reply_markup=_new_payment_kb(),
             )
+            await _remove_payment_actions(cb.message)
             await cb.answer()
             return
 
@@ -407,7 +439,12 @@ async def cb_check_payment(cb: CallbackQuery) -> None:
     method_type = payment_method.get("type")
 
     with SessionLocal() as session:
-        payment: Payment | None = session.query(Payment).filter(Payment.id == payment_db_id).first()
+        payment: Payment | None = (
+            session.query(Payment)
+            .filter(Payment.id == payment_db_id)
+            .with_for_update()
+            .first()
+        )
         if not payment:
             await cb.message.answer("Платёж не найден. Напиши, пожалуйста, администратору.")
             return
@@ -417,7 +454,8 @@ async def cb_check_payment(cb: CallbackQuery) -> None:
         # Проверяем ДО обновления статуса
         was_already_processed = payment.status == "succeeded"
         
-        payment.status = status or payment.status
+        if status != "succeeded" or paid:
+            payment.status = status or payment.status
         payment.method = method_type or payment.method
         payment.updated_at = datetime.utcnow()
 
@@ -451,8 +489,9 @@ async def cb_check_payment(cb: CallbackQuery) -> None:
                 ]
                 await cb.message.answer(
                     "\n".join(text_lines),
-                    reply_markup=_payment_actions_kb(payment_db_id),
+                    reply_markup=_new_payment_kb(),
                 )
+                await _remove_payment_actions(cb.message)
                 # Дополнительное сообщение после пополнения баланса — только благодарность
                 fed_text = (
                     "Спасибо за рыбки!💖💖💖\n"
@@ -472,6 +511,18 @@ async def cb_check_payment(cb: CallbackQuery) -> None:
                     logger.warning("Файл fed_milky.jpg не найден по пути: %s", fed_path)
                     await cb.message.answer(fed_text)
                 return
+
+        if was_already_processed:
+            db_user = session.query(User).filter(User.id == user.id).first()
+            balance = getattr(db_user, "fish_balance", 0) if db_user else 0
+            session.commit()
+            await cb.message.answer(
+                f"Этот платёж уже завершён ✅\nТекущий баланс: {balance} 🐟\n\n"
+                "Для нового пополнения выбери тариф ниже.",
+                reply_markup=_new_payment_kb(),
+            )
+            await _remove_payment_actions(cb.message)
+            return
 
         session.commit()
 
