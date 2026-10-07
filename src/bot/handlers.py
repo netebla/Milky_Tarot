@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import html
+import json
 import asyncio
 import logging
 import os
@@ -32,7 +34,10 @@ from utils.cards_loader import (
     load_cards,
 )
 from utils.admin_ids import is_admin as _is_admin
-from utils.db import SessionLocal, User
+from utils.db import SessionLocal, User, PendingReading, ReadingAttempt
+from utils.pending_readings import get_pending_reading
+from utils.reading_charge import claim_reading, cache_interpretation, release_reading, complete_reading
+from .payment_navigation import open_payment_chat
 from utils.push import send_push_card
 from utils.scheduler import DEFAULT_PUSH_TIME
 from llm.three_cards import generate_three_card_reading
@@ -122,7 +127,7 @@ def _get_or_create_user(session: Session, user_id: int, username: str | None) ->
     return user
 
 
-async def _start_three_cards_flow(message: Message, state: FSMContext) -> None:
+async def _start_three_cards_flow(message: Message, state: FSMContext, reading_user=None) -> None:
     if len(CARDS) < 3:
         await message.answer("Недостаточно карт для расклада.")
         await state.clear()
@@ -130,7 +135,7 @@ async def _start_three_cards_flow(message: Message, state: FSMContext) -> None:
 
     await state.clear()
 
-    user = message.from_user
+    user = reading_user or message.from_user
     user_id = user.id if user else None
     username = user.username if user else None
 
@@ -232,9 +237,9 @@ async def _send_card_message(message: Message, card) -> None:
     )
 
 
-async def _start_three_cards_with_intro(message: Message, state: FSMContext) -> None:
+async def _start_three_cards_with_intro(message: Message, state: FSMContext, reading_user=None) -> None:
     """Запустить расклад «Задать свой вопрос» и показать его вступление."""
-    await _start_three_cards_flow(message, state)
+    await _start_three_cards_flow(message, state, reading_user)
 
     intro_text_1 = (
         "Мяу, давай посмотрим глубже 🐈‍⬛\n"
@@ -263,6 +268,10 @@ async def _start_three_cards_with_intro(message: Message, state: FSMContext) -> 
 
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext) -> None:
+    payload = (message.text or "").split(maxsplit=1)
+    if len(payload) == 2 and payload[1].startswith("resume_"):
+        await _offer_pending_reading(message, message.from_user.id, payload[1][7:])
+        return
     user_id = message.from_user.id
     username = message.from_user.username if message.from_user else None
     today = date.today()
@@ -421,7 +430,7 @@ async def cb_daily_card_ask_question(cb: CallbackQuery, state: FSMContext) -> No
         return
 
     await cb.answer()
-    await _start_three_cards_with_intro(cb.message, state)
+    await _start_three_cards_with_intro(cb.message, state, cb.from_user)
 
 
 @router.callback_query(F.data == "change_push_time")
@@ -438,20 +447,7 @@ async def msg_fish_topup(message: Message, state: FSMContext) -> None:
         return
 
     await state.clear()
-    await message.answer(
-        "Чтобы пополнить баланс рыбок, перейди в бота оплаты.\n\n"
-        "Там можно выбрать тариф, оплатить через ЮKassa и вернуться обратно в Милки.",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Открыть бота оплаты",
-                        url="https://t.me/Milky_payment_bot",
-                    )
-                ]
-            ]
-        ),
-    )
+    await open_payment_chat(message, user.id, "topup_balance")
 
 
 @router.callback_query(F.data == "fish_topup")
@@ -462,22 +458,9 @@ async def cb_fish_topup(cb: CallbackQuery, state: FSMContext) -> None:
         await cb.answer()
         return
 
-    await state.clear()
-    await cb.message.answer(
-        "Чтобы пополнить баланс рыбок, перейди в бота оплаты.\n\n"
-        "Там можно выбрать тариф, оплатить через ЮKassa и вернуться обратно в Милки.",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Открыть бота оплаты",
-                        url="https://t.me/Milky_payment_bot",
-                    )
-                ]
-            ]
-        ),
-    )
     await cb.answer()
+    await state.clear()
+    await open_payment_chat(cb.message, user.id, "topup_balance")
 
 
 @router.message(F.text == "Главное меню")
@@ -1016,7 +999,7 @@ async def cb_admin_push_start_reading(cb: CallbackQuery, state: FSMContext) -> N
         return
 
     await cb.answer()
-    await _start_three_cards_flow(cb.message, state)
+    await _start_three_cards_flow(cb.message, state, cb.from_user)
 
     intro_text_1 = (
         "Мяу, давай посмотрим глубже 🐈‍⬛\n"
@@ -1218,8 +1201,83 @@ async def cb_three_keys_go_to_question(cb: CallbackQuery, state: FSMContext) -> 
     await cb.answer()
 
 
+def _reading_retry_kb(reading_id):
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="Продолжить вопрос", callback_data=f"resume_reading:{reading_id}"),
+    ]])
+
+
+async def _offer_pending_reading(message: Message, user_id: int, reading_id: str) -> None:
+    reading = get_pending_reading(user_id, reading_id)
+    if not reading:
+        await message.answer(
+            "Этот вопрос уже обработан или срок его хранения истёк. Можно задать новый вопрос.",
+            reply_markup=main_menu_kb(_is_admin(user_id)),
+        )
+        return
+    with SessionLocal() as session:
+        user = session.query(User).filter(User.id == user_id).first()
+        balance = (user.fish_balance or 0) if user else 0
+        paid_reading = bool(user and user.three_keys_last_date == date.today() and (user.three_keys_daily_count or 0) >= 1)
+        active_attempt = session.query(ReadingAttempt).filter(
+            ReadingAttempt.pending_reading_id == reading.id,
+            ReadingAttempt.user_id == user_id, ReadingAttempt.status.in_(["generating", "ready"]),
+        ).first()
+        agreed_price = active_attempt.price_fish if active_attempt else None
+    price = agreed_price if agreed_price is not None else (get_service_price("three_keys", 69) if paid_reading else 0)
+    cost_text = f"Расклад стоит {price} 🐟." if price else "Этот расклад сегодня будет бесплатным."
+    await message.answer(
+        f"Твой сохранённый вопрос:\n{html.escape(reading.question[:1500])}\n\n"
+        f"Сейчас у тебя {balance} 🐟. {cost_text}\n"
+        "Продолжим? История и выбранные карты тоже сохранены.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"Продолжить за {price} 🐟" if price else "Продолжить бесплатно",
+                callback_data=f"confirm_reading:{reading.id}:{price}",
+            )],
+            [InlineKeyboardButton(text="Пополнить рыбки", callback_data="three_keys_buy_fish")],
+            [InlineKeyboardButton(text="Главное меню", callback_data="fish_main_menu")],
+        ]),
+    )
+
+
+@router.callback_query(F.data.startswith("resume_reading:"))
+async def cb_resume_reading(cb: CallbackQuery) -> None:
+    await cb.answer()
+    await _offer_pending_reading(cb.message, cb.from_user.id, cb.data.split(":", 1)[1])
+
+
+@router.callback_query(F.data.startswith("confirm_reading:"))
+async def cb_confirm_reading(cb: CallbackQuery, state: FSMContext) -> None:
+    await cb.answer()
+    try:
+        _, reading_id, price_text = cb.data.split(":")
+        confirmed_price = int(price_text)
+    except (ValueError, AttributeError):
+        await cb.message.answer("Открой сохранённый вопрос ещё раз, чтобы продолжить.")
+        return
+    reading = get_pending_reading(cb.from_user.id, reading_id)
+    if not reading:
+        await cb.message.answer("Этот вопрос уже обработан или срок его хранения истёк.")
+        return
+    await state.clear()
+    await state.update_data(
+        three_cards=json.loads(reading.card_titles), three_keys_context=reading.context,
+    )
+    await handle_three_cards_question(
+        cb.message, state, reading_user=cb.from_user,
+        restored_question=reading.question, pending_reading_id=reading.id,
+        confirmed_price=confirmed_price,
+    )
+
+
 @router.message(ThreeCardsStates.waiting_question)
-async def handle_three_cards_question(message: Message, state: FSMContext) -> None:
+async def handle_three_cards_question(
+    message: Message, state: FSMContext,
+    reading_user=None, restored_question: str | None = None,
+    pending_reading_id: str | None = None,
+    confirmed_price: int | None = None,
+) -> None:
     if len(CARDS) < 3:
         await message.answer("Недостаточно карт для расклада.")
         await state.clear()
@@ -1239,132 +1297,136 @@ async def handle_three_cards_question(message: Message, state: FSMContext) -> No
     else:
         selected_cards = random.sample(CARDS, 3)
 
-    question = (message.text or message.caption or "").strip()
+    question = (restored_question if restored_question is not None else (message.text or message.caption or "")).strip()
     if not question:
         await message.answer("Пожалуйста, сформулируй вопрос текстом.")
         return
 
     context_text = (data.get("three_keys_context") or "").strip()
 
-    user = message.from_user
+    user = reading_user or message.from_user
     user_id = user.id if user else None
     username = user.username if user else None
 
-    # Учёт бесплатного расклада и списание рыбок за повторные расклады
-    if user_id is not None:
-        today = date.today()
-        with SessionLocal() as session:
-            user_obj = session.query(User).filter(User.id == user_id).first()
-            if not user_obj:
-                user_obj = User(id=user_id, username=username)
-                session.add(user_obj)
-
-            last_date = getattr(user_obj, "three_keys_last_date", None)
-            daily_count = getattr(user_obj, "three_keys_daily_count", 0) or 0
-            if last_date != today:
-                daily_count = 0
-
-            # Первый расклад за день — бесплатный.
-            # Начиная со второго — списываем 69 рыбок, если хватает.
-            FREE_PER_DAY = 1
-            price_fish = get_service_price("three_keys", 69)
-
-            if daily_count >= FREE_PER_DAY:
-                balance = getattr(user_obj, "fish_balance", 0) or 0
-                if balance < price_fish:
-                    # Недостаточно рыбок — показываем голодную Милки и выходим.
-                    hungry_path = Path("src/data/images/hungry_milky.jpg")
-                    text = (
-                        "Мяу… Похоже, мои силы закончились.\n"
-                        "Вся моя магия на сегодня уже исчерпана, лапки устали, "
-                        "а в мисочке совсем нет рыбок 😿\n"
-                        "Если пополнишь баланс, я смогу продолжить прямо сейчас.\n"
-                        "А если нет — приходи завтра. К этому времени я отдохну, "
-                        "подкреплюсь и снова с радостью вытяну карты для тебя❤️"
-                    )
-                    kb_buy_fish = InlineKeyboardMarkup(
-                        inline_keyboard=[
-                            [
-                                InlineKeyboardButton(
-                                    text="Купить рыбки",
-                                    callback_data="three_keys_buy_fish",
-                                )
-                            ]
-                        ]
-                    )
-                    if hungry_path.exists():
-                        try:
-                            await message.answer_photo(
-                                photo=BufferedInputFile(hungry_path.read_bytes(), filename=hungry_path.name),
-                                caption=text,
-                                reply_markup=kb_buy_fish,
-                            )
-                        except TelegramBadRequest:
-                            await message.answer(text, reply_markup=kb_buy_fish)
-                    else:
-                        await message.answer(text, reply_markup=kb_buy_fish)
-                    await state.clear()
-                    return
-
-                # Списываем рыбки за расклад
-                user_obj.fish_balance = balance - price_fish
-
-            # Фиксируем факт расклада на сегодня
-            daily_count += 1
-            user_obj.three_keys_last_date = today
-            user_obj.three_keys_daily_count = daily_count
-            # Считаем количество вытянутых карт
-            user_obj.draw_count = (user_obj.draw_count or 0) + len(selected_cards)
-            user_obj.last_activity_date = today
-
-            session.commit()
-
-    await message.answer("Колода тасуется... Подожди несколько секунд ✨")
-
-    try:
-        interpretation = await generate_three_card_reading(selected_cards, question, context=context_text)
-    except Exception as exc:
-        logger.exception("Ошибка при обращении к LLM: %s", exc)
-        await message.answer("Не удалось получить трактовку. Попробуй чуть позже.")
+    attempt = claim_reading(
+        user_id, username, question, context_text, [card.title for card in selected_cards],
+        get_service_price("three_keys", 69), pending_reading_id, confirmed_price,
+    )
+    status = attempt["status"]
+    if status == "busy":
+        await message.answer("Я уже готовлю твой расклад 🐾 Подожди немного — повторно рыбки не спишутся.")
+        return
+    if status == "unavailable":
+        await message.answer("Этот вопрос уже обработан или срок его хранения истёк.")
         await state.clear()
         return
+    if status == "unfinished":
+        await message.answer("У тебя остался сохранённый вопрос 🐾 Давай сначала закончим его.",
+            reply_markup=_reading_retry_kb(attempt["pending_id"]))
+        return
+    if status == "price_changed":
+        await message.answer("Стоимость расклада изменилась. Подтверди актуальные условия.")
+        await _offer_pending_reading(message, user_id, attempt["pending_id"])
+        await state.clear()
+        return
+    if status == "insufficient":
+        price_fish, balance = attempt["price"], attempt["balance"]
+        await message.answer(
+            f"Для этого расклада нужно {price_fish} 🐟.\n"
+            f"Сейчас у тебя {balance} 🐟 — не хватает {price_fish - balance} 🐟.\n\n"
+            "Я сохранила твой вопрос и историю на 24 часа 🐾\n"
+            "Пополни баланс, а потом нажми «Продолжить вопрос».\n"
+            "А если нет — приходи завтра. К этому времени я отдохну, "
+            "подкреплюсь и снова с радостью вытяну карты для тебя❤️",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Купить рыбки", callback_data="three_keys_buy_fish")],
+                [InlineKeyboardButton(text="Продолжить вопрос", callback_data=f"resume_reading:{attempt['pending_id']}")],
+            ]),
+        )
+        await state.clear()
+        return
+    question, context_text = attempt["question"], attempt["context"]
+    interpretation = attempt["interpretation"]
+    try:
+        selected_cards = [next(card for card in CARDS if card.title == title) for title in attempt["titles"]]
+        if not interpretation:
+            await message.answer("Колода тасуется... Подожди несколько секунд ✨")
+            interpretation = await generate_three_card_reading(selected_cards, question, context=context_text)
+            if not cache_interpretation(attempt["id"], attempt["token"], interpretation):
+                return
+    except Exception:
+        logger.exception("Ошибка генерации расклада attempt=%s user=%s", attempt["id"], user_id)
+        release_reading(attempt["id"], attempt["token"])
+        await state.clear()
+        try:
+            await message.answer(
+                "Карты пока не подсказали ответ 🐾 Рыбки остались у тебя, а вопрос и история сохранены. Попробуем ещё раз?",
+                reply_markup=_reading_retry_kb(attempt["pending_id"]),
+            )
+        except Exception:
+            logger.warning("Не удалось доставить подсказку ошибки LLM user=%s", user_id)
+        return
 
-    for card in selected_cards:
-        sent = False
-        local_path = getattr(card, "image_path", None)
-        if callable(local_path):
-            path = local_path()
-            if path.exists():
+    try:
+        for card in selected_cards:
+            sent = False
+            local_path = getattr(card, "image_path", None)
+            if callable(local_path):
+                path = local_path()
+                if path.exists():
+                    try:
+                        await message.answer_photo(
+                            photo=BufferedInputFile(path.read_bytes(), filename=path.name),
+                            caption=card.title,
+                        )
+                        sent = True
+                    except TelegramBadRequest:
+                        sent = False
+            if not sent:
                 try:
+                    image_bytes = await _fetch_image_bytes(card.image_url())
                     await message.answer_photo(
-                        photo=BufferedInputFile(path.read_bytes(), filename=path.name),
+                        photo=BufferedInputFile(image_bytes, filename=f"{card.title}.jpg"),
                         caption=card.title,
                     )
                     sent = True
-                except TelegramBadRequest:
+                except (httpx.HTTPError, TelegramBadRequest, TelegramNetworkError):
                     sent = False
-        if not sent:
-            try:
-                image_bytes = await _fetch_image_bytes(card.image_url())
-                await message.answer_photo(
-                    photo=BufferedInputFile(image_bytes, filename=f"{card.title}.jpg"),
-                    caption=card.title,
-                )
-                sent = True
-            except (httpx.HTTPError, TelegramBadRequest, TelegramNetworkError):
-                sent = False
-        if not sent:
-            await message.answer(card.title)
+            if not sent:
+                await message.answer(card.title)
 
-    cards_titles = ", ".join(card.title for card in selected_cards)
-    response_text = (
-        'Расклад "Задать свой вопрос"\n'
-        f"Вопрос: {question}\n"
-        f"Карты: {cards_titles}\n\n"
-        f"{interpretation}"
-    )
+        cards_titles = ", ".join(card.title for card in selected_cards)
+        response_text = (
+            'Расклад "Задать свой вопрос"\n'
+            f"Вопрос: {question}\n"
+            f"Карты: {cards_titles}\n\n"
+            f"{interpretation}"
+        )
 
-    await message.answer(response_text)
+        # Send plain text in safe-sized chunks; charge only after the last chunk.
+        # Telegram counts UTF-16 units: 2000 code points fit even if all are emoji.
+        for offset in range(0, len(response_text), 2000):
+            await message.answer(response_text[offset:offset + 2000], parse_mode=None)
+    except Exception:
+        logger.exception("Ошибка доставки расклада attempt=%s user=%s", attempt["id"], user_id)
+        release_reading(attempt["id"], attempt["token"])
+        await state.clear()
+        try:
+            await message.answer(
+                "Не получилось отправить расклад 🐾 Рыбки не списались. Ответ уже сохранён — попробуем доставить его ещё раз?",
+                reply_markup=_reading_retry_kb(attempt["pending_id"]),
+            )
+        except Exception:
+            logger.warning("Не удалось доставить подсказку повторной попытки user=%s", user_id)
+        return
+    try:
+        complete_reading(attempt["id"], attempt["token"])
+    except Exception:
+        logger.exception("Не удалось завершить доставленный расклад attempt=%s", attempt["id"])
+        release_reading(attempt["id"], attempt["token"])
+        await state.clear()
+        return
+    await state.clear()
     # После трактовки отправляем кастомный эмодзи с выбором следующего шага
     await message.answer(
         '<tg-emoji emoji-id="5413703918947413540">🐈‍⬛</tg-emoji>',
@@ -1396,7 +1458,7 @@ async def cb_three_keys_again(cb: CallbackQuery, state: FSMContext) -> None:
         await cb.answer()
         return
 
-    await _start_three_cards_flow(cb.message, state)
+    await _start_three_cards_flow(cb.message, state, cb.from_user)
 
     intro_text_1 = (
         "Мяу, давай посмотрим, что подскажет тебе ещё один расклад из трёх карт! 😼\n"
@@ -1458,22 +1520,9 @@ async def cb_three_keys_buy_fish(cb: CallbackQuery, state: FSMContext) -> None:
         await cb.answer()
         return
 
-    await state.clear()
-    await cb.message.answer(
-        "Чтобы пополнить баланс рыбок, перейди в бота оплаты.\n\n"
-        "Там можно выбрать тариф, оплатить через ЮKassa и вернуться обратно в Милки.",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Открыть бота оплаты",
-                        url="https://t.me/Milky_payment_bot",
-                    )
-                ]
-            ]
-        ),
-    )
     await cb.answer()
+    await state.clear()
+    await open_payment_chat(cb.message, user.id, "topup_three_keys")
 
 
 # -------- Онбординг: имя, ДР, часовой пояс --------
@@ -1797,13 +1846,13 @@ async def _generate_next_question_background(
         return
 
     question_data = NEW_YEAR_QUESTIONS[next_question_index]
-    
+
     # Выбираем случайную карту
     if len(CARDS) < 1:
         return
 
     selected_card = random.choice(CARDS)
-    
+
     # Генерируем трактовку
     try:
         interpretation = await generate_new_year_reading(
@@ -1812,7 +1861,7 @@ async def _generate_next_question_background(
             next_question_index + 1,
             len(NEW_YEAR_QUESTIONS),
         )
-        
+
         # Сохраняем готовый результат в state (только название карты, не объект)
         data = await state.get_data()
         ready_answers = data.get("new_year_ready_answers", {})
@@ -1821,7 +1870,7 @@ async def _generate_next_question_background(
             "interpretation": interpretation,
         }
         await state.update_data(new_year_ready_answers=ready_answers)
-        
+
         logger.info("Фоновая генерация вопроса %d завершена для пользователя %d", next_question_index + 1, user_id)
     except Exception as exc:
         logger.exception("Ошибка при фоновой генерации вопроса %d для пользователя %d: %s", next_question_index + 1, user_id, exc)

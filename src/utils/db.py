@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     BigInteger,
     Index,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
@@ -128,6 +129,43 @@ class UserMemory(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class PendingReading(Base):
+    """Вопрос, отложенный до пополнения; принадлежит одному пользователю."""
+
+    __tablename__ = "pending_readings"
+
+    id = Column(String(32), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    question = Column(Text, nullable=False)
+    context = Column(Text, nullable=False, default="")
+    card_titles = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default="pending", index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False, index=True)
+
+
+class ReadingAttempt(Base):
+    """Долговечная генерация и доставка расклада до однократного списания."""
+
+    __tablename__ = "reading_attempts"
+
+    id = Column(String(32), primary_key=True)
+    pending_reading_id = Column(
+        String(32), ForeignKey("pending_readings.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    status = Column(String, nullable=False, default="generating", index=True)
+    question = Column(Text, nullable=False)
+    context = Column(Text, nullable=False, default="")
+    card_titles = Column(Text, nullable=False)
+    interpretation = Column(Text, nullable=True)
+    price_fish = Column(Integer, nullable=False)
+    reading_date = Column(Date, nullable=False)
+    lease_token = Column(String(32), nullable=True)
+    lease_expires_at = Column(DateTime, nullable=True, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class Payment(Base):
     """
     Платёж через ЮKassa.
@@ -154,6 +192,22 @@ class Payment(Base):
     description = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PaymentNotification(Base):
+    """Событие уведомления, зафиксированное вместе с начислением рыбок."""
+
+    __tablename__ = "payment_notifications"
+
+    id = Column(Integer, primary_key=True)
+    payment_id = Column(Integer, ForeignKey("payments.id", ondelete="CASCADE"), nullable=False, index=True)
+    channel = Column(String, nullable=False)
+    event_type = Column(String, nullable=False, default="succeeded")
+    sent_at = Column(DateTime, nullable=True)
+    claimed_until = Column(DateTime, nullable=True, index=True)
+    attempts = Column(Integer, nullable=False, default=0)
+
+    __table_args__ = (UniqueConstraint("payment_id", "channel", "event_type", name="uq_payment_notification_channel"),)
 
 
 class ProductPrice(Base):

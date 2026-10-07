@@ -10,10 +10,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from contextlib import suppress
 
 from utils.proxy import configure_process_proxy, create_aiogram_session
 from utils.db import init_db
 from utils.pricing import ensure_default_prices
+from utils.payment_processing import payment_worker
 
 configure_process_proxy()
 
@@ -23,6 +25,7 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from .payment_handlers import router as payment_router
+from .payment_messages import send_success_notification
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -50,10 +53,31 @@ async def main() -> None:
     dp = Dispatcher(storage=MemoryStorage())
 
     dp.include_router(payment_router)
-    dp.startup.register(on_startup)
 
-    logger.info("Запускаю бота оплаты (@Milky_payment_bot)")
-    await dp.start_polling(bot)
+    main_token = os.getenv("BOT_TOKEN")
+    if not main_token:
+        raise RuntimeError("BOT_TOKEN is required for durable payment notifications in Milky")
+    main_bot = Bot(
+        token=main_token,
+        session=create_aiogram_session(),
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+
+    async def deliver(channel, result):
+        target = main_bot if channel == "main" else bot
+        await send_success_notification(target, result, channel)
+
+    # Initialise tables before reconciliation and before accepting updates.
+    await on_startup()
+    worker = asyncio.create_task(payment_worker(deliver))
+    logger.info("Запускаю бота оплаты (@Milky_payment_bot) со сверкой платежей из БД")
+    try:
+        await dp.start_polling(bot)
+    finally:
+        worker.cancel()
+        with suppress(asyncio.CancelledError):
+            await worker
+        await main_bot.session.close()
 
 
 if __name__ == "__main__":

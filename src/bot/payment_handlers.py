@@ -4,7 +4,7 @@ from __future__ import annotations
 Обработчики второго бота (@Milky_payment_bot), отвечающего за оплату.
 
 Сценарий:
-1. Админ заходит в бота и выбирает тариф (количество рублей).
+1. Пользователь заходит в бота и выбирает тариф (количество рублей).
 2. Создаём платёж в ЮKassa, сохраняем его в БД.
 3. Отправляем ссылку на оплату (confirmation_url) и кнопку «Проверить оплату».
 4. После нажатия «Проверить оплату» запрашиваем статус в ЮKassa:
@@ -13,28 +13,22 @@ from __future__ import annotations
    - если canceled — пишем, что платёж не прошёл.
 """
 
-import asyncio
 import logging
-from datetime import datetime
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import CommandStart
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message, BufferedInputFile
-from pathlib import Path
-from sqlalchemy.orm import Session
+from aiogram.filters import Command, CommandStart
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message
 
-from utils.admin_ids import is_admin as _is_admin
 from utils.db import SessionLocal, User, Payment
 from utils.fish import tariff_to_amounts
 from utils.pricing import get_tariffs
+from utils.pending_readings import get_pending_reading
 from utils.yookassa_client import create_payment, get_payment, YooKassaError
+from utils.payment_processing import apply_payment_status, deliver_pending_notifications
+from .payment_messages import send_success_notification
 
 logger = logging.getLogger(__name__)
-
-# Определяем путь к изображениям относительно этого файла
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-IMAGES_DIR = DATA_DIR / "images"
 
 router = Router()
 
@@ -47,7 +41,17 @@ async def _remove_payment_actions(message: Message) -> None:
         logger.debug("Кнопки платежа уже удалены или сообщение нельзя изменить")
 
 
-def _tariffs_keyboard() -> InlineKeyboardMarkup:
+def _return_to_main_button(user_id: int | None = None) -> InlineKeyboardButton:
+    reading = get_pending_reading(user_id) if user_id is not None else None
+    if reading:
+        return InlineKeyboardButton(
+            text="Продолжить вопрос в Милки",
+            url=f"https://t.me/Milky_Tarot_Bot?start=resume_{reading.id}",
+        )
+    return InlineKeyboardButton(text="Вернуться в Милки", url="https://t.me/Milky_Tarot_Bot")
+
+
+def _tariffs_keyboard(user_id: int | None = None) -> InlineKeyboardMarkup:
     """Клавиатура с тарифами пополнения."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -56,11 +60,15 @@ def _tariffs_keyboard() -> InlineKeyboardMarkup:
                 callback_data=f"pay_tariff:{tariff.amount_rub}",
             )]
             for tariff in get_tariffs()
-        ]
+        ] + [[_return_to_main_button(user_id)]]
     )
 
 
-def _payment_actions_kb(payment_db_id: int, include_back_to_main: bool = True) -> InlineKeyboardMarkup:
+def _payment_actions_kb(
+    payment_db_id: int,
+    include_back_to_main: bool = True,
+    confirmation_url: str | None = None,
+) -> InlineKeyboardMarkup:
     """
     Клавиатура под сообщением с оплатой:
     - кнопка «Я оплатил, проверить» — дергает статус платежа;
@@ -74,6 +82,8 @@ def _payment_actions_kb(payment_db_id: int, include_back_to_main: bool = True) -
             )
         ]
     ]
+    if confirmation_url:
+        buttons.insert(0, [InlineKeyboardButton(text="Перейти к оплате", url=confirmation_url)])
     if include_back_to_main:
         buttons.append(
             [
@@ -86,169 +96,61 @@ def _payment_actions_kb(payment_db_id: int, include_back_to_main: bool = True) -
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def _new_payment_kb() -> InlineKeyboardMarkup:
+def _new_payment_kb(user_id: int | None = None) -> InlineKeyboardMarkup:
     """Дать понятный путь к новому платежу после завершения предыдущего."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Пополнить ещё", callback_data="show_tariffs")]
+            [_return_to_main_button(user_id)],
+            [InlineKeyboardButton(text="Пополнить ещё", callback_data="show_tariffs")],
         ]
+    )
+
+
+async def send_tariffs(bot: Bot, user_id: int) -> None:
+    with SessionLocal() as session:
+        user = session.query(User).filter(User.id == user_id).first()
+        balance = (user.fish_balance or 0) if user else 0
+    await bot.send_message(
+        chat_id=user_id,
+        text=(f"Здесь можно пополнить баланс рыбок 🐟\nСейчас у тебя {balance} 🐟.\n\n"
+              "Выбери сумму пополнения:"),
+        reply_markup=_tariffs_keyboard(user_id),
     )
 
 
 @router.callback_query(F.data == "show_tariffs")
 async def cb_show_tariffs(cb: CallbackQuery) -> None:
+    await cb.answer()
     await cb.message.answer(
         "Выбери сумму нового пополнения:",
-        reply_markup=_tariffs_keyboard(),
+        reply_markup=_tariffs_keyboard(cb.from_user.id),
     )
-    await cb.answer()
+
+
+async def _deliver_payment_notification(bot: Bot, payment_db_id: int) -> None:
+    async def deliver(channel, result):
+        await send_success_notification(bot, result, channel)
+    await deliver_pending_notifications(
+        deliver, session_factory=SessionLocal, payment_id=payment_db_id, channels=("payment",),
+    )
 
 
 async def _auto_check_payment(bot: Bot, payment_db_id: int, user_id: int) -> None:
-    """
-    Фоновая проверка статуса платежа в ЮKassa.
-
-    Периодически опрашивает ЮKassa и:
-    - при успешной оплате начисляет рыбки и отправляет сообщение пользователю;
-    - при отмене сообщает пользователю;
-    - если по таймауту платёж всё ещё pending, предлагает проверить вручную.
-    """
-    max_attempts = 18  # ~3 минуты при шаге 10 секунд
-    delay_seconds = 10
-
-    for _ in range(max_attempts):
-        with SessionLocal() as session:
-            payment: Payment | None = session.query(Payment).filter(Payment.id == payment_db_id).first()
-            if not payment:
-                return
-
-            # Если платёж уже обработан вручную
-            if payment.status == "succeeded":
-                # Успех уже сообщил обработчик, который первым зафиксировал платёж.
-                # Повторное уведомление после ожидания только засоряет чат.
-                return
-
-            yookassa_id = payment.yookassa_payment_id
-
-        try:
-            payment_data = await get_payment(yookassa_id)
-        except YooKassaError:
-            logger.exception("Не удалось получить статус платежа %s в ЮKassa", yookassa_id)
-            await asyncio.sleep(delay_seconds)
-            continue
-
-        status = payment_data.get("status")
-        paid = bool(payment_data.get("paid"))
-        payment_method = payment_data.get("payment_method") or {}
-        method_type = payment_method.get("type")
-
-        with SessionLocal() as session:
-            payment: Payment | None = (
-                session.query(Payment)
-                .filter(Payment.id == payment_db_id)
-                .with_for_update()
-                .first()
-            )
-            if not payment:
-                return
-
-            # КРИТИЧЕСКИ ВАЖНО: Проверяем, что платеж еще не был обработан
-            # Это предотвращает двойное начисление при race condition
-            # Проверяем ДО обновления статуса
-            was_already_processed = payment.status == "succeeded"
-            
-            # Не фиксируем succeeded без подтверждённого paid: иначе следующий
-            # проход сочтёт платёж обработанным и рыбки никогда не начислятся.
-            if status != "succeeded" or paid:
-                payment.status = status or payment.status
-            payment.method = method_type or payment.method
-            payment.updated_at = datetime.utcnow()
-
-            if status == "succeeded" and paid and not was_already_processed:
-                user_obj = session.query(User).filter(User.id == user_id).first()
-                if not user_obj:
-                    user_obj = User(id=user_id)
-                    session.add(user_obj)
-
-                current_balance = getattr(user_obj, "fish_balance", 0) or 0
-                user_obj.fish_balance = current_balance + payment.fish_amount
-                # Обновляем статус платежа перед commit, чтобы предотвратить повторное начисление
-                payment.status = "succeeded"
-                session.commit()
-                new_balance = user_obj.fish_balance
-
-                logger.info(
-                    "[payment] succeeded db_id=%s user_id=%s fish_credited=%s balance=%s method=%s source=auto_poll",
-                    payment_db_id,
-                    user_id,
-                    payment.fish_amount,
-                    new_balance,
-                    method_type or "",
-                )
-
-                text_lines = [
-                    "Оплата прошла успешно ✨",
-                    f"Тебе начислено {payment.fish_amount} 🐟.",
-                    f"Твой новый баланс: {new_balance} 🐟",
-                ]
-                await bot.send_message(
-                    chat_id=user_id,
-                    text="\n".join(text_lines),
-                    reply_markup=_new_payment_kb(),
-                )
-                
-                # Отправляем изображение сытой милки
-                fed_text = (
-                    "Спасибо за рыбки!💖💖💖\n"
-                    "Теперь я снова в порядке — сытая, собранная и готовая продолжать 😻"
-                )
-                fed_path = IMAGES_DIR / "fed_milky.jpg"
-                if fed_path.exists():
-                    try:
-                        await bot.send_photo(
-                            chat_id=user_id,
-                            photo=BufferedInputFile(fed_path.read_bytes(), filename=fed_path.name),
-                            caption=fed_text,
-                        )
-                    except TelegramBadRequest:
-                        await bot.send_message(chat_id=user_id, text=fed_text)
-                else:
-                    logger.warning("Файл fed_milky.jpg не найден по пути: %s", fed_path)
-                    await bot.send_message(chat_id=user_id, text=fed_text)
-                return
-
-            session.commit()
-
-        if status in {"canceled"}:
-            logger.info(
-                "[payment] canceled db_id=%s user_id=%s yookassa_id=%s source=auto_poll",
-                payment_db_id,
-                user_id,
-                yookassa_id,
-            )
-            await bot.send_message(
-                chat_id=user_id,
-                text=(
-                    "Платёж находится в статусе «отменён» или не был завершён.\n"
-                    "Если деньги всё же списались, напиши, пожалуйста, администратору."
-                ),
-            )
+    """Совместимый однократный check; постоянную проверку выполняет payment_worker."""
+    with SessionLocal() as session:
+        payment = session.get(Payment, payment_db_id)
+        if payment is None or payment.user_id != user_id:
             return
-
-        await asyncio.sleep(delay_seconds)
-
-    # Если после всех попыток платёж всё ещё не завершён
-    await bot.send_message(
-        chat_id=user_id,
-        text=(
-            "Платёж всё ещё в ожидании.\n"
-            "Если ты уже оплатил и деньги списались, вернись в этого бота "
-            "и нажми кнопку «Я оплатил, проверить» под последним сообщением об оплате."
-        ),
-    )
+        provider_id = payment.yookassa_payment_id
+    data = await get_payment(provider_id)
+    result = apply_payment_status(payment_db_id, data, session_factory=SessionLocal)
+    if result.status in ("succeeded", "canceled"):
+        await _deliver_payment_notification(bot, payment_db_id)
 
 
 @router.message(CommandStart())
+@router.message(Command("topup"))
+@router.message(F.text.in_({"Пополнить баланс 🐟", "Пополнить ещё", "Тарифы"}))
 async def cmd_start(message: Message) -> None:
     """
     Точка входа во второй бот.
@@ -257,11 +159,7 @@ async def cmd_start(message: Message) -> None:
     if not user:
         return
 
-    await message.answer(
-        "Привет! Здесь можно пополнить баланс рыбок 🐟\n\n"
-        "Выбери, на сколько хочешь пополнить баланс:",
-        reply_markup=_tariffs_keyboard(),
-    )
+    await send_tariffs(message.bot, user.id)
 
 
 @router.callback_query(F.data.startswith("pay_tariff:"))
@@ -285,6 +183,8 @@ async def cb_pay_tariff(cb: CallbackQuery) -> None:
         await cb.answer("Неизвестный тариф, выбери другой.")
         return
 
+    await cb.answer("Готовлю ссылку на оплату…")
+
     # Создаём платёж в ЮKassa
     description = f"Пополнение баланса на {total_fish} рыбок (user_id={user.id})"
     metadata = {
@@ -299,21 +199,22 @@ async def cb_pay_tariff(cb: CallbackQuery) -> None:
     except YooKassaError as e:
         logger.exception("Не удалось создать платёж в ЮKassa")
         await cb.message.answer(
-            "Не удалось создать платёж в ЮKassa. Попробуй немного позже или напиши администратору."
+            "Не удалось создать платёж в ЮKassa. Попробуй немного позже.",
+            reply_markup=_new_payment_kb(user.id),
         )
-        await cb.answer()
         return
 
     yookassa_id = payment_data.get("id")
     confirmation = payment_data.get("confirmation") or {}
     confirmation_url = confirmation.get("confirmation_url")
 
-    if not yookassa_id or not confirmation_url:
+    immediate_success = payment_data.get("status") == "succeeded" and payment_data.get("paid") is True
+    if not yookassa_id or (not confirmation_url and not immediate_success):
         logger.error("Некорректный ответ ЮKassa: %s", payment_data)
         await cb.message.answer(
-            "Не удалось получить ссылку на оплату. Напиши, пожалуйста, администратору."
+            "Не удалось получить ссылку на оплату. Попробуй немного позже.",
+            reply_markup=_new_payment_kb(user.id),
         )
-        await cb.answer()
         return
 
     # Сохраняем платёж в нашей базе
@@ -323,7 +224,7 @@ async def cb_pay_tariff(cb: CallbackQuery) -> None:
             yookassa_payment_id=yookassa_id,
             amount_rub=amount_rub,
             fish_amount=total_fish,
-            status=payment_data.get("status", "pending"),
+            status="pending",
             description=description,
         )
         session.add(db_payment)
@@ -347,9 +248,26 @@ async def cb_pay_tariff(cb: CallbackQuery) -> None:
         total_fish,
     )
 
-    # Запускаем фоновую проверку статуса платежа
-    bot = cb.message.bot
-    asyncio.create_task(_auto_check_payment(bot, payment_db_id, user.id))
+    if immediate_success:
+        # Даже немедленный ответ POST не объявляем успехом до проверенного GET.
+        # Заказ уже сохранён pending: worker восстановит проверку при сетевой ошибке.
+        try:
+            verified_data = await get_payment(yookassa_id)
+            result = apply_payment_status(payment_db_id, verified_data, session_factory=SessionLocal)
+        except (YooKassaError, ValueError):
+            logger.exception("Не удалось подтвердить немедленную оплату %s", yookassa_id)
+            result = None
+        if result is not None and result.status == "succeeded":
+            await _deliver_payment_notification(cb.message.bot, payment_db_id)
+            return
+        if not confirmation_url:
+            await cb.message.answer(
+                "Проверяю подтверждение оплаты. Сообщу, как только рыбки окажутся на балансе.",
+                reply_markup=_payment_actions_kb(payment_db_id),
+            )
+            return
+
+    # Заказ подхватит постоянный worker из БД, в том числе после перезапуска.
 
     text_lines = [
         f"Ты выбрал тариф на {amount_rub}₽.",
@@ -357,26 +275,12 @@ async def cb_pay_tariff(cb: CallbackQuery) -> None:
         + (f" (из них {bonus_fish} — бонусные 🎁)" if bonus_fish > 0 else ""),
         "",
         "Нажми кнопку ниже, чтобы перейти на страницу оплаты ЮKassa:",
+        "После оплаты я проверю платёж автоматически. Если подтверждение не пришло, нажми «Я оплатил, проверить».",
     ]
     await cb.message.answer(
         "\n".join(text_lines),
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Перейти к оплате",
-                        url=confirmation_url,
-                    )
-                ]
-            ],
-        ),
+        reply_markup=_payment_actions_kb(payment_db_id, confirmation_url=confirmation_url),
     )
-
-    await cb.message.answer(
-        "После того как оплатишь, вернись в этот чат и нажми «Я оплатил, проверить».",
-        reply_markup=_payment_actions_kb(payment_db_id),
-    )
-    await cb.answer()
 
 
 @router.callback_query(F.data.startswith("check_payment:"))
@@ -406,134 +310,37 @@ async def cb_check_payment(cb: CallbackQuery) -> None:
             await cb.answer("Этот платёж привязан к другому пользователю.")
             return
 
-        # Если уже зафиксирован успешный платёж — просто показываем результат
-        if payment.status == "succeeded":
-            db_user = session.query(User).filter(User.id == user.id).first()
-            balance = getattr(db_user, "fish_balance", 0) if db_user else 0
-            await cb.message.answer(
-                f"Этот платёж уже завершён ✅\nТекущий баланс: {balance} 🐟\n\n"
-                "Для нового пополнения выбери тариф ниже.",
-                reply_markup=_new_payment_kb(),
-            )
-            await _remove_payment_actions(cb.message)
-            await cb.answer()
-            return
+        already_succeeded = payment.status == "succeeded"
 
         yookassa_id = payment.yookassa_payment_id
 
-    await cb.answer("Проверяю статус платежа…")
+    if already_succeeded:
+        await cb.answer("Оплата уже подтверждена, рыбки на балансе ✅")
+        await _deliver_payment_notification(cb.message.bot, payment_db_id)
+        await _remove_payment_actions(cb.message)
+        return
 
-    # Запрашиваем статус в ЮKassa
+    await cb.answer("Проверяю статус платежа…")
     try:
         payment_data = await get_payment(yookassa_id)
-    except YooKassaError:
-        logger.exception("Не удалось получить статус платежа %s в ЮKassa", yookassa_id)
+        result = apply_payment_status(payment_db_id, payment_data, session_factory=SessionLocal)
+    except (YooKassaError, ValueError):
+        logger.exception("Не удалось подтвердить платёж %s в ЮKassa", yookassa_id)
         await cb.message.answer(
-            "Не удалось получить статус платежа. Попробуй ещё раз через минуту."
+            "Пока не удалось подтвердить оплату. Я продолжу проверку автоматически. Можно проверить ещё раз через минуту.",
+            reply_markup=_payment_actions_kb(payment_db_id),
         )
         return
 
-    status = payment_data.get("status")
-    paid = bool(payment_data.get("paid"))
-    payment_method = payment_data.get("payment_method") or {}
-    method_type = payment_method.get("type")
-
-    with SessionLocal() as session:
-        payment: Payment | None = (
-            session.query(Payment)
-            .filter(Payment.id == payment_db_id)
-            .with_for_update()
-            .first()
-        )
-        if not payment:
-            await cb.message.answer("Платёж не найден. Напиши, пожалуйста, администратору.")
-            return
-
-        # КРИТИЧЕСКИ ВАЖНО: Проверяем, что платеж еще не был обработан
-        # Это предотвращает двойное начисление при race condition
-        # Проверяем ДО обновления статуса
-        was_already_processed = payment.status == "succeeded"
-        
-        if status != "succeeded" or paid:
-            payment.status = status or payment.status
-        payment.method = method_type or payment.method
-        payment.updated_at = datetime.utcnow()
-
-        if status == "succeeded" and paid and not was_already_processed:
-                # Начисляем рыбки пользователю один раз
-                user_obj = session.query(User).filter(User.id == user.id).first()
-                if not user_obj:
-                    user_obj = User(id=user.id, username=user.username)
-                    session.add(user_obj)
-
-                current_balance = getattr(user_obj, "fish_balance", 0) or 0
-                user_obj.fish_balance = current_balance + payment.fish_amount
-                # Обновляем статус платежа перед commit, чтобы предотвратить повторное начисление
-                payment.status = "succeeded"
-                session.commit()
-                new_balance = user_obj.fish_balance
-
-                logger.info(
-                    "[payment] succeeded db_id=%s user_id=%s fish_credited=%s balance=%s method=%s source=manual_check",
-                    payment_db_id,
-                    user.id,
-                    payment.fish_amount,
-                    new_balance,
-                    method_type or "",
-                )
-
-                text_lines = [
-                    "Оплата прошла успешно ✨",
-                    f"Тебе начислено {payment.fish_amount} 🐟.",
-                    f"Твой новый баланс: {new_balance} 🐟",
-                ]
-                await cb.message.answer(
-                    "\n".join(text_lines),
-                    reply_markup=_new_payment_kb(),
-                )
-                await _remove_payment_actions(cb.message)
-                # Дополнительное сообщение после пополнения баланса — только благодарность
-                fed_text = (
-                    "Спасибо за рыбки!💖💖💖\n"
-                    "Теперь я снова в порядке — сытая, собранная и готовая продолжать 😻"
-                )
-                fed_path = IMAGES_DIR / "fed_milky.jpg"
-                if fed_path.exists():
-                    try:
-                        await cb.message.answer_photo(
-                            photo=BufferedInputFile(fed_path.read_bytes(), filename=fed_path.name),
-                            caption=fed_text,
-                        )
-                    except TelegramBadRequest:
-                        logger.warning("Не удалось отправить фото fed_milky.jpg через answer_photo, отправляем текст")
-                        await cb.message.answer(fed_text)
-                else:
-                    logger.warning("Файл fed_milky.jpg не найден по пути: %s", fed_path)
-                    await cb.message.answer(fed_text)
-                return
-
-        if was_already_processed:
-            db_user = session.query(User).filter(User.id == user.id).first()
-            balance = getattr(db_user, "fish_balance", 0) if db_user else 0
-            session.commit()
-            await cb.message.answer(
-                f"Этот платёж уже завершён ✅\nТекущий баланс: {balance} 🐟\n\n"
-                "Для нового пополнения выбери тариф ниже.",
-                reply_markup=_new_payment_kb(),
-            )
-            await _remove_payment_actions(cb.message)
-            return
-
-        session.commit()
-
-    if status in {"canceled"}:
-        await cb.message.answer(
-            "Платёж находится в статусе «отменён» или не был завершён.\n"
-            "Если деньги всё же списались, напиши, пожалуйста, администратору.",
-            reply_markup=_payment_actions_kb(payment_db_id),
-        )
+    if result.status == "succeeded":
+        # Outbox сохраняет уведомление при ошибке Telegram и повторяет доставку.
+        await _deliver_payment_notification(cb.message.bot, payment_db_id)
+        await _remove_payment_actions(cb.message)
+    elif result.status == "canceled":
+        await _deliver_payment_notification(cb.message.bot, payment_db_id)
+        await _remove_payment_actions(cb.message)
     else:
         await cb.message.answer(
-            "Платёж ещё не завершён. Если ты только что оплатил, подожди 1–2 минуты и нажми «Я оплатил, проверить» ещё раз.",
+            "Платёж ещё не завершён. Я продолжу проверку автоматически и сообщу, когда рыбки окажутся на балансе. Можно проверить ещё раз через минуту.",
             reply_markup=_payment_actions_kb(payment_db_id),
         )

@@ -124,6 +124,9 @@ jobs:
             docker compose -f docker-compose.prod.yml exec -T db psql -v ON_ERROR_STOP=1 -U postgres -d tarot_db < migrations/003_support_bot.sql
             docker compose -f docker-compose.prod.yml exec -T db psql -v ON_ERROR_STOP=1 -U postgres -d tarot_db < migrations/004_admin_panel.sql
             docker compose -f docker-compose.prod.yml exec -T db psql -v ON_ERROR_STOP=1 -U postgres -d tarot_db < migrations/005_user_activity.sql
+            docker compose -f docker-compose.prod.yml exec -T db psql -v ON_ERROR_STOP=1 -U postgres -d tarot_db < migrations/006_pending_readings.sql
+            docker compose -f docker-compose.prod.yml exec -T db psql -v ON_ERROR_STOP=1 -U postgres -d tarot_db < migrations/007_payment_notifications.sql
+            docker compose -f docker-compose.prod.yml exec -T db psql -v ON_ERROR_STOP=1 -U postgres -d tarot_db < migrations/008_reading_attempts.sql
             docker compose -f docker-compose.prod.yml up -d
             docker compose -f docker-compose.prod.yml exec -T bot sh -c 'test -n "$SUPPORT_BOT_USERNAME" || test -n "$SUPPORT_BOT_TOKEN"'
             docker compose -f docker-compose.prod.yml exec -T admin_bot sh -c 'test -n "$ADMIN_BOT_TOKEN" && test -n "$BOT_TOKEN" && test -n "$ADMIN_ID"'
