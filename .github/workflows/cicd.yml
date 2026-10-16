@@ -64,6 +64,8 @@ jobs:
           port: ${{ secrets.SSH_PORT || 22 }}
           script: |
             set -e
+            docker info >/dev/null
+            docker compose version
             mkdir -p ~/apps/milky_tarot
             mkdir -p ~/apps/milky_tarot/data
             [ -f ~/apps/milky_tarot/data/users.json ] || echo '{}' > ~/apps/milky_tarot/data/users.json
@@ -121,6 +123,9 @@ jobs:
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d db
             until docker compose -f docker-compose.prod.yml exec -T db pg_isready -U postgres -d tarot_db; do sleep 2; done
+            # On a new VM the database volume is empty. Create ORM-managed base
+            # tables before applying SQL migrations that reference users/payments.
+            docker compose -f docker-compose.prod.yml run --rm --no-deps bot python -c 'from utils.db import init_db; init_db()'
             docker compose -f docker-compose.prod.yml exec -T db psql -v ON_ERROR_STOP=1 -U postgres -d tarot_db < migrations/003_support_bot.sql
             docker compose -f docker-compose.prod.yml exec -T db psql -v ON_ERROR_STOP=1 -U postgres -d tarot_db < migrations/004_admin_panel.sql
             docker compose -f docker-compose.prod.yml exec -T db psql -v ON_ERROR_STOP=1 -U postgres -d tarot_db < migrations/005_user_activity.sql
