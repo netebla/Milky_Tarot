@@ -18,6 +18,9 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL") or "deepseek/deepseek-v4-flash"
 OPENROUTER_TIMEOUT_SECONDS = float(os.getenv("OPENROUTER_TIMEOUT_SECONDS") or "90")
 OPENROUTER_TEMPERATURE = float(os.getenv("OPENROUTER_TEMPERATURE") or "0.35")
 OPENROUTER_MAX_TOKENS = int(os.getenv("OPENROUTER_MAX_TOKENS") or "900")
+# ``max_tokens`` ограничивает один ответ API, а не длину сообщения для пользователя.
+# Если модель дошла до лимита, ask_llm запрашивает продолжение этого же ответа.
+OPENROUTER_MAX_CONTINUATIONS = int(os.getenv("OPENROUTER_MAX_CONTINUATIONS") or "4")
 
 PROXY_URL = get_proxy_url()
 PROXY_ENABLED = bool(PROXY_URL)
@@ -155,13 +158,65 @@ async def chat_completion(
 
 
 async def ask_llm(prompt: str) -> str:
-    """Отправить запрос в OpenRouter и вернуть текстовый ответ."""
-    response = await chat_completion([{"role": "user", "content": prompt}])
-    choices = response.get("choices") or []
-    message = choices[0].get("message") if choices and isinstance(choices[0], dict) else None
-    text = message.get("content") if isinstance(message, dict) else None
-    if isinstance(text, str) and text.strip():
-        return text.strip()
+    """Отправить запрос в OpenRouter и вернуть полный текстовый ответ.
 
-    logger.error("OpenRouter response contained no text content")
-    raise OpenRouterClientError("В ответе OpenRouter отсутствует текстовая часть")
+    OpenRouter может завершить completion по ``max_tokens``. В таком случае нельзя
+    отдавать пользователю оборванный фрагмент: продолжаем тот же ответ отдельным
+    запросом и объединяем части. Ограничение числа продолжений защищает от
+    неограниченной генерации при некорректном поведении провайдера.
+    """
+    messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+    parts: list[str] = []
+
+    for continuation_number in range(OPENROUTER_MAX_CONTINUATIONS + 1):
+        response = await chat_completion(messages)
+        choices = response.get("choices") or []
+        choice = choices[0] if choices and isinstance(choices[0], dict) else None
+        message = choice.get("message") if isinstance(choice, dict) else None
+        text = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(text, str) or not text.strip():
+            logger.error("OpenRouter response contained no text content")
+            raise OpenRouterClientError("В ответе OpenRouter отсутствует текстовая часть")
+
+        part = text.strip()
+        parts.append(part)
+        finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+        if finish_reason != "length":
+            # Разделитель не склеивает слова, если провайдер завершил ответ между
+            # токенами; модель получает предыдущую часть и не должна её повторять.
+            return "\n".join(parts)
+
+        if continuation_number >= OPENROUTER_MAX_CONTINUATIONS:
+            logger.error(
+                "OpenRouter completion remained truncated after %d continuations "
+                "(request_id=%s, model=%s)",
+                OPENROUTER_MAX_CONTINUATIONS,
+                response.get("id"),
+                response.get("model"),
+            )
+            raise OpenRouterClientError("OpenRouter не смог завершить слишком длинный ответ")
+
+        logger.warning(
+            "OpenRouter completion hit max_tokens; requesting continuation %d/%d "
+            "(request_id=%s, model=%s)",
+            continuation_number + 1,
+            OPENROUTER_MAX_CONTINUATIONS,
+            response.get("id"),
+            response.get("model"),
+        )
+        messages.extend(
+            [
+                {"role": "assistant", "content": part},
+                {
+                    "role": "user",
+                    "content": (
+                        "Предыдущий ответ был автоматически остановлен на лимите длины. "
+                        "Продолжи его с того места, где остановился. Не повторяй уже "
+                        "написанное, не начинай ответ заново и не упоминай этот лимит."
+                    ),
+                },
+            ]
+        )
+
+    # Цикл всегда возвращает или выбрасывает исключение; ветка нужна для type checker.
+    raise OpenRouterClientError("Не удалось получить ответ OpenRouter")

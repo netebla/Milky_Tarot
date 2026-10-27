@@ -1,0 +1,88 @@
+#cloud-config
+# Create an Ubuntu 24.04 x86_64 VM and replace the SSH key placeholder below
+# with the public key for the private key that will be stored in GitHub Actions.
+# Network policy: inbound TCP/22 only; no public PostgreSQL or bot ports.
+# Outbound is allowed for DNS (TCP/UDP 53), NTP (UDP 123), APT (TCP 80/443),
+# Telegram, OpenRouter, YooKassa, GitHub Container Registry, and Docker image pulls.
+
+timezone: Europe/Moscow
+package_update: true
+package_upgrade: false
+
+users:
+  - name: netebla
+    gecos: Milky Tarot deploy user
+    shell: /bin/bash
+    groups: [sudo]
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    lock_passwd: true
+    ssh_authorized_keys:
+      - "REPLACE_WITH_SSH_ED25519_PUBLIC_KEY"
+
+disable_root: true
+ssh_pwauth: false
+
+packages:
+  - ca-certificates
+  - curl
+  - docker.io
+  - docker-compose-v2
+  - fail2ban
+  - ufw
+  - unattended-upgrades
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/60-milky-tarot.conf
+    owner: root:root
+    permissions: "0644"
+    content: |
+      PubkeyAuthentication yes
+      PasswordAuthentication no
+      PermitRootLogin no
+      X11Forwarding no
+
+  - path: /etc/fail2ban/jail.d/sshd.local
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [sshd]
+      enabled = true
+      backend = systemd
+      maxretry = 5
+      findtime = 10m
+      bantime = 1h
+
+  - path: /etc/docker/daemon.json
+    owner: root:root
+    permissions: "0644"
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "10m",
+          "max-file": "5"
+        },
+        "live-restore": true
+      }
+
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root:root
+    permissions: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::AutocleanInterval "7";
+
+runcmd:
+  - [usermod, -aG, docker, netebla]
+  - [systemctl, enable, --now, docker]
+  - [systemctl, enable, --now, fail2ban]
+  - [systemctl, enable, apt-daily.timer, apt-daily-upgrade.timer]
+  - [sshd, -t]
+  - [systemctl, reload, ssh]
+  - [ufw, default, deny, incoming]
+  - [ufw, default, allow, outgoing]
+  - [ufw, allow, 22/tcp]
+  - [ufw, --force, enable]
+
+final_message: "Milky Tarot VM base setup completed after $UPTIME seconds"

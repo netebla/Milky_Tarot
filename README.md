@@ -85,6 +85,8 @@ Webhook-сервер не требуется для текущей реализ�
 - `YOOKASSA_RETURN_URL` (по умолчанию `https://t.me/Milky_Tarot_Bot`)
 - `OPENROUTER_API_KEY`
 - `OPENROUTER_MODEL` (по умолчанию `deepseek/deepseek-v4-flash`)
+- `OPENROUTER_MAX_CONTINUATIONS` (по умолчанию `4`) — сколько раз бот может запросить
+  продолжение ответа, завершённого провайдером по лимиту токенов.
 - `SUPPORT_BOT_USERNAME` — необязательный username support-бота без `@`; если не задан,
   основной бот автоматически получает его через `SUPPORT_BOT_TOKEN`.
 
@@ -247,6 +249,7 @@ docker logs --tail 200 tarot_bot
 OPENROUTER_MODEL=deepseek/deepseek-v4-flash
 OPENROUTER_TEMPERATURE=0.35
 OPENROUTER_MAX_TOKENS=900
+OPENROUTER_MAX_CONTINUATIONS=4
 ```
 
 Для дополнительной защиты включите в OpenRouter Dashboard Guardrails: allowlist используемой
